@@ -710,12 +710,24 @@ class TestPagos(BaseE2E):
 class TestRedFamiliar(BaseE2E):
     def test_cp35_el_vinculo_solo_existe_tras_aceptacion_en_app(self):
         token = self.token_ciudadano()
-        self.registrar_ciudadano("maria", "clave-de-maria")
-        alta = self.client.post(f"{API}/familia/agregar/", headers=self.auth(token), json={
+        codigo_maria = self.registrar_ciudadano("maria", "clave-de-maria").json()["codigo_enlace"]
+        # El nombre de usuario ya no sirve para invitar: hace falta el código que ella comparte.
+        por_nombre = self.client.post(f"{API}/familia/agregar/", headers=self.auth(token), json={
             "usuario_invitado": "maria", "parentesco": "Madre",
+        })
+        self.assertEqual(por_nombre.status_code, 422)
+        codigo_inexistente = self.client.post(f"{API}/familia/agregar/", headers=self.auth(token), json={
+            "codigo_invitado": "GEO-000000", "parentesco": "Madre",
+        })
+        self.assertEqual(codigo_inexistente.status_code, 400)
+        # Se acepta el código en minúsculas y con espacios alrededor.
+        alta = self.client.post(f"{API}/familia/agregar/", headers=self.auth(token), json={
+            "codigo_invitado": f"  {codigo_maria.lower()} ", "parentesco": "Madre",
         })
         self.assertEqual(alta.status_code, 201)
         self.assertEqual(alta.json()["estado"], "PENDIENTE")
+        enviadas = self.client.get(f"{API}/familia/invitaciones/enviadas/", headers=self.auth(token))
+        self.assertEqual([item["invitado_usuario"] for item in enviadas.json()], ["maria"])
         lista = self.client.get(f"{API}/familia/listar/juan_perez", headers=self.auth(token))
         self.assertEqual(lista.status_code, 200)
         self.assertEqual(lista.json(), [])
@@ -733,14 +745,22 @@ class TestRedFamiliar(BaseE2E):
         lista = self.client.get(f"{API}/familia/listar/juan_perez", headers=self.auth(token))
         self.assertEqual(lista.json()[0]["familiar_usuario"], "maria")
         self.assertEqual(lista.json()[0]["parentesco"], "Madre")
+        enviadas = self.client.get(f"{API}/familia/invitaciones/enviadas/", headers=self.auth(token))
+        self.assertEqual(enviadas.json(), [])
+        repetida = self.client.post(f"{API}/familia/agregar/", headers=self.auth(token), json={
+            "codigo_invitado": codigo_maria, "parentesco": "Madre",
+        })
+        self.assertEqual(repetida.status_code, 400)
+        self.assertIn("ya está en tu red", self.mensaje(repetida))
 
     def test_vinculo_familiar_impide_auto_invitacion_y_lectura_de_otra_cuenta(self):
-        token_juan = self.token_ciudadano("juan_perez", "clave-juan")
-        self.registrar_ciudadano("maria", "clave-maria")
+        codigo_juan = self.registrar_ciudadano("juan_perez", "clave-juan").json()["codigo_enlace"]
+        token_juan = self.login("juan_perez", "clave-juan").json()["token"]
+        codigo_maria = self.registrar_ciudadano("maria", "clave-maria").json()["codigo_enlace"]
         auto = self.client.post(
             f"{API}/familia/agregar/",
             headers=self.auth(token_juan),
-            json={"usuario_invitado": "juan_perez", "parentesco": "Yo"},
+            json={"codigo_invitado": codigo_juan, "parentesco": "Yo"},
         )
         self.assertEqual(auto.status_code, 400)
 
@@ -748,7 +768,7 @@ class TestRedFamiliar(BaseE2E):
         invitacion = self.client.post(
             f"{API}/familia/agregar/",
             headers=self.auth(token_juan),
-            json={"usuario_invitado": "maria", "parentesco": "Hermana"},
+            json={"codigo_invitado": codigo_maria, "parentesco": "Hermana"},
         ).json()
         no_es_invitada = self.client.post(
             f"{API}/familia/invitaciones/{invitacion['id']}/aceptar/",

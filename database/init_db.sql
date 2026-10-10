@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
     permisos VARCHAR(500) NOT NULL DEFAULT '[]',
     is_active INTEGER NOT NULL DEFAULT 1,
     codigo_enlace VARCHAR(50) UNIQUE NOT NULL,    -- Código para vinculación familiar
+    correo_seguridad VARCHAR(255),                -- Correo para alertas antirrobo (opcional)
+    correo_seguridad_bloqueado_hasta TIMESTAMP,   -- No se puede cambiar el correo antes de esta hora (UTC)
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -39,6 +39,7 @@ def test_alert_service_returns_only_persisted_facts():
     with patch("app.services.alert_service.AlertRepository") as repository:
         repository.return_value.create_spatial_alert.return_value = db_alert
         repository.return_value.count_family_recipients.return_value = 0
+        repository.return_value.get_institution_recipients.return_value = []
         response = AlertService(MagicMock()).despachar_alerta(make_payload())
 
     assert response.estado == "REGISTRADA"
@@ -68,6 +69,7 @@ def test_alert_service_forwards_sms_metadata_to_existing_repository():
     with patch("app.services.alert_service.AlertRepository") as repository:
         repository.return_value.create_spatial_alert.return_value = alert
         repository.return_value.count_family_recipients.return_value = 0
+        repository.return_value.get_institution_recipients.return_value = []
         AlertService(MagicMock()).despachar_alerta(
             make_payload(
                 client_alert_id="ABCDEFGHJK",

@@ -18,6 +18,11 @@ class ConsoleSMSGateway(ISMSGateway):
     """Fallback sin entrega real; el webhook exige firma HMAC configurada."""
 
     def enviar(self, destinatario: str, mensaje: str) -> Dict[str, Any]:
+        if settings.SMS_CONSOLE_PRINT_MESSAGES:
+            # Modo de desarrollo explícito: no se envía nada a la red telefónica;
+            # el texto solo se muestra en la terminal donde corre el backend.
+            print(f"[SMS de desarrollo, NO enviado] para {destinatario}: {mensaje}", flush=True)
+            return {"estado": "MOSTRADO_EN_CONSOLA", "provider_id": None}
         logger.warning("Gateway SMS de consola: envío no realizado (destino enmascarado).")
         return {"estado": "NO_CONFIGURADO", "provider_id": None}
 

@@ -347,7 +347,11 @@ class SMSService:
             logger.exception("Falló el envío del SMS de respuesta; la alerta ya quedó persistida.")
             return "FALLO"
         status = result.get("estado")
-        return "NO_CONFIGURADO" if status == "NO_CONFIGURADO" else "ACEPTADA_POR_PROVEEDOR"
+        if status == "NO_CONFIGURADO":
+            return "NO_CONFIGURADO"
+        if status == "MOSTRADO_EN_CONSOLA":
+            return "SOLO_CONSOLA_DESARROLLO"
+        return "ACEPTADA_POR_PROVEEDOR"
 
     @staticmethod
     def _parse_webhook_body(raw_body: bytes, content_type: str) -> InboundSMS:

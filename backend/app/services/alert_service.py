@@ -8,6 +8,8 @@ from app.schemas.alert import (
     AlertaResponse,
     AlertaDetalle,
     AlertStateUpdate,
+    AlertaSinAsignar,
+    AsignacionManualResponse,
     EnrutamientoInstitucional,
     NotificacionFamiliar,
 )
@@ -44,6 +46,7 @@ class AlertService(BaseService):
         )
 
         recipient_count = self.alert_repo.count_family_recipients(alerta_db.id)
+        instituciones = list(self.alert_repo.get_institution_recipients(alerta_db.id))
         return AlertaResponse(
             estado=alerta_db.estado,
             alerta_id=alerta_db.id,
@@ -56,7 +59,9 @@ class AlertService(BaseService):
                 else None
             ),
             enrutamiento_institucional=EnrutamientoInstitucional(
-                estado="SIN_COBERTURA_CONFIRMADA",
+                estado="EN_BANDEJA_INSTITUCIONAL" if instituciones else "SIN_COBERTURA_CONFIRMADA",
+                institucion_responsable=", ".join(instituciones) or None,
+                instituciones=instituciones,
                 prioridad=alerta_in.nivel_gravedad,
             ),
             notificacion_familiar=NotificacionFamiliar(
@@ -99,6 +104,40 @@ class AlertService(BaseService):
             client_alert_id=client_alert_id,
             usuario=usuario,
             actor=actor,
+        )
+
+    def instituciones_asignadas(self, alerta_id: int) -> List[str]:
+        return list(self.alert_repo.get_institution_recipients(alerta_id))
+
+    def listar_sin_asignar(self, limit: int = 50) -> List[AlertaSinAsignar]:
+        return [
+            AlertaSinAsignar(
+                id=alerta.id,
+                usuario=alerta.usuario,
+                tipo_emergencia=alerta.tipo_emergencia,
+                nivel_gravedad=alerta.nivel_gravedad,
+                origen_alerta=alerta.origen_alerta,
+                estado=alerta.estado,
+                canal_entrada=alerta.canal_entrada,
+                latitud=alerta.latitud,
+                longitud=alerta.longitud,
+                creado_en=alerta.creado_en,
+                instituciones_en_cobertura=self.alert_repo.institutions_covering(alerta.latitud, alerta.longitud),
+            )
+            for alerta in self.alert_repo.get_unassigned_open_alerts(limit=limit)
+        ]
+
+    def asignar_manualmente(self, alerta_id: int, institution_name: str, actor: str, reason: str) -> AsignacionManualResponse:
+        alerta = self.alert_repo.assign_alert_manually(
+            alert_id=alerta_id,
+            institution_name=institution_name,
+            actor=actor,
+            reason=reason,
+        )
+        return AsignacionManualResponse(
+            alerta_id=alerta.id,
+            estado=alerta.estado,
+            instituciones=self.instituciones_asignadas(alerta.id),
         )
 
     def listar_alertas_activas(self, institucion: Optional[str], limit: int = 50) -> List[AlertaDetalle]:

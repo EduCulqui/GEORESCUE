@@ -32,6 +32,8 @@ class CoaccionService(BaseService):
             client_alert_id=str(alerta_in.client_alert_id),
         )
 
+        instituciones = list(self.alert_repo.get_institution_recipients(alerta_db.id))
+
         return RoboCoaccionResponse(
             estado=alerta_db.estado,
             alerta_id=alerta_db.id,
@@ -42,8 +44,9 @@ class CoaccionService(BaseService):
             coordenadas=coordenadas,
             enrutamiento_institucional={
                 "prioridad": alerta_in.nivel_gravedad,
-                "estado": "SIN_COBERTURA_CONFIRMADA",
-                "institucion_responsible": None,
+                "estado": "EN_BANDEJA_INSTITUCIONAL" if instituciones else "SIN_COBERTURA_CONFIRMADA",
+                "institucion_responsible": ", ".join(instituciones) or None,
+                "instituciones": instituciones,
                 "tiempo_estimado_despliegue": None,
             },
             notificacion_familiar={

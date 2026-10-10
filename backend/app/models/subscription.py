@@ -60,6 +60,15 @@ class InstitutionAccount(Base):
     monthly_total = Column(Float, default=0.0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # Cobertura geográfica: un círculo (centro + radio) que el propietario de la
+    # plataforma valida contra una evidencia. Mientras coverage_validated_at sea
+    # NULL la institución no recibe alertas de forma automática.
+    coverage_lat = Column(Float, nullable=True)
+    coverage_lng = Column(Float, nullable=True)
+    coverage_radius_km = Column(Float, nullable=True)
+    coverage_evidence = Column(Text, nullable=True)
+    coverage_validated_by = Column(String(120), nullable=True)
+    coverage_validated_at = Column(DateTime, nullable=True)
 
 
 class InstitutionMember(Base):

@@ -57,3 +57,26 @@ class InstitutionReviewResponse(BaseModel):
     reviewed_by: str
     reviewed_at: Optional[datetime] = None
     message: str
+
+
+class InstitutionCoverageItem(BaseModel):
+    """Institución activa y su cobertura geográfica (centro + radio)."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    institution_name: str
+    is_active: bool
+    coverage_lat: Optional[float] = None
+    coverage_lng: Optional[float] = None
+    coverage_radius_km: Optional[float] = None
+    coverage_evidence: Optional[str] = None
+    coverage_validated_by: Optional[str] = None
+    coverage_validated_at: Optional[datetime] = None
+
+
+class InstitutionCoverageRequest(BaseModel):
+    latitud: float = Field(..., ge=-90, le=90)
+    longitud: float = Field(..., ge=-180, le=180)
+    radio_km: float = Field(..., gt=0, le=500)
+    # Qué documento o fuente respalda que la institución atiende esa zona.
+    evidencia: str = Field(..., min_length=10, max_length=2000)

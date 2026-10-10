@@ -69,9 +69,13 @@ class AlertStateUpdate(BaseModel):
 
 
 class EnrutamientoInstitucional(BaseModel):
+    # SIN_COBERTURA_CONFIRMADA: ninguna institución con cobertura validada la tiene.
+    # EN_BANDEJA_INSTITUCIONAL: está visible en la bandeja de `instituciones`;
+    # no significa que alguien la haya leído ni que haya una unidad en camino.
     estado: str = "SIN_COBERTURA_CONFIRMADA"
     departamento: Optional[str] = None
     institucion_responsable: Optional[str] = None
+    instituciones: List[str] = Field(default_factory=list)
     prioridad: int
     tiempo_estimado_despliegue: Optional[str] = None
 
@@ -114,3 +118,29 @@ class AlertaDetalle(BaseModel):
     longitud: Optional[float] = None
     timestamp_dispositivo: Optional[datetime] = None
     creado_en: Optional[datetime] = None
+
+
+class AlertaSinAsignar(BaseModel):
+    """Alerta abierta que ninguna institución tiene en su bandeja (vista del propietario)."""
+    id: int
+    usuario: Optional[str] = None
+    tipo_emergencia: str
+    nivel_gravedad: Optional[int] = None
+    origen_alerta: Optional[str] = None
+    estado: str
+    canal_entrada: str = "API"
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    creado_en: Optional[datetime] = None
+    instituciones_en_cobertura: List[str] = Field(default_factory=list)
+
+
+class AsignacionManualRequest(BaseModel):
+    institution_name: str = Field(..., min_length=2, max_length=120)
+    reason: str = Field(..., min_length=10, max_length=500)
+
+
+class AsignacionManualResponse(BaseModel):
+    alerta_id: int
+    estado: str
+    instituciones: List[str]

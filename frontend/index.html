@@ -274,9 +274,90 @@
                 </div>
                 <div id="owner-payments-list" class="grid grid-cols-1 gap-3 lg:grid-cols-2"></div>
             </div>
+
+            <div class="mt-10 border-t border-slate-800 pt-6">
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-base font-bold text-white">Cobertura de instituciones</h2>
+                        <p class="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">Define la zona que cada institución aprobada atiende: un punto central y un radio. Una alerta nueva aparece en su bandeja solo si su ubicación cae dentro de esa zona. Sin cobertura validada, la institución no recibe alertas automáticas.</p>
+                    </div>
+                    <span id="owner-coverage-feedback" class="text-xs text-slate-400" role="status"></span>
+                </div>
+                <div id="owner-coverage-list" class="grid grid-cols-1 gap-3 lg:grid-cols-2"></div>
+            </div>
+
+            <div class="mt-10 border-t border-slate-800 pt-6">
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-base font-bold text-white">Alertas sin institución asignada</h2>
+                        <p class="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">Alertas abiertas que ninguna institución ve: llegaron sin ubicación o fuera de toda cobertura. Asígnalas a mano solo si sabes a quién le corresponde, y anota por qué.</p>
+                    </div>
+                    <span id="owner-unassigned-feedback" class="text-xs text-slate-400" role="status"></span>
+                </div>
+                <div id="owner-unassigned-list" class="grid grid-cols-1 gap-3 lg:grid-cols-2"></div>
+            </div>
+
+            <div class="mt-10 border-t border-slate-800 pt-6">
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-base font-bold text-white">Directorio de emergencia</h2>
+                        <p class="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">Comisarías, compañías de bomberos y centros de salud que la app muestra como «Cerca de ti», debajo de 105, 116 y 106. Carga solo datos de una fuente oficial y anota cuándo la revisaste: un teléfono equivocado cuesta tiempo en una emergencia.</p>
+                    </div>
+                    <span id="owner-directory-summary" class="text-xs text-slate-400" role="status"></span>
+                </div>
+                <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <form id="owner-directory-import" onsubmit="App.importarDirectorio(event)" class="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs">
+                        <h3 class="text-sm font-bold text-white">Cargar desde un archivo CSV</h3>
+                        <p class="mt-1 text-slate-400">Columnas: <span class="font-mono text-slate-200">nombre, latitud, longitud</span> (obligatorias) y <span class="font-mono text-slate-200">tipo, telefono, direccion, distrito, ubicacion_aproximada</span>. Si una entrada ya existe se actualiza.</p>
+                        <label class="mt-3 block text-slate-300">Archivo
+                            <input id="owner-directory-file" type="file" accept=".csv,text/csv" required class="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white file:mr-3 file:rounded file:border-0 file:bg-slate-700 file:px-2 file:py-1 file:text-white" />
+                        </label>
+                        <div class="mt-2 grid grid-cols-2 gap-2">
+                            <label class="block text-slate-300">Tipo de las filas
+                                <select id="owner-directory-type" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white">
+                                    <option value="">El archivo trae la columna «tipo»</option>
+                                    <option value="COMISARIA">Todas son comisarías</option>
+                                    <option value="BOMBEROS">Todas son bomberos</option>
+                                    <option value="SALUD">Todas son salud</option>
+                                    <option value="SERENAZGO">Todas son serenazgo</option>
+                                </select>
+                            </label>
+                            <label class="block text-slate-300">Fecha en que revisaste la fuente
+                                <input id="owner-directory-date" type="date" required class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white" />
+                            </label>
+                        </div>
+                        <label class="mt-2 block text-slate-300">Fuente de los datos
+                            <input id="owner-directory-source" type="text" required minlength="10" maxlength="1000" placeholder="Nombre del documento oficial y su enlace" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white" />
+                        </label>
+                        <div class="mt-3 flex justify-end">
+                            <button type="submit" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600">Cargar archivo</button>
+                        </div>
+                        <div id="owner-directory-result" class="mt-3 space-y-1 text-slate-300" role="status"></div>
+                    </form>
+                    <div class="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs">
+                        <h3 class="text-sm font-bold text-white">Revisar y corregir entradas</h3>
+                        <form onsubmit="App.buscarEnDirectorio(event)" class="mt-3 flex gap-2">
+                            <label for="owner-directory-search" class="sr-only">Buscar por nombre o distrito</label>
+                            <input id="owner-directory-search" type="search" placeholder="Nombre o distrito" class="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white" />
+                            <button type="submit" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:bg-slate-700">Buscar</button>
+                        </form>
+                        <div id="owner-directory-list" class="mt-3 max-h-96 space-y-2 overflow-y-auto"></div>
+                    </div>
+                </div>
+            </div>
             </div>
         </section>
     </main>
+
+    <div id="modal-evidencia" class="hidden fixed inset-0 z-[2100] items-center justify-center bg-black/80 p-4" role="dialog" aria-modal="true" aria-labelledby="modal-evidencia-titulo">
+        <div class="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-4">
+            <div class="flex items-center justify-between gap-3">
+                <h2 id="modal-evidencia-titulo" class="text-sm font-bold text-white">Evidencia antirrobo</h2>
+                <button type="button" onclick="App.cerrarEvidencia()" class="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">Cerrar</button>
+            </div>
+            <img id="modal-evidencia-foto" alt="Foto capturada por el modo antirrobo" class="mt-3 max-h-[70vh] w-full rounded-xl border border-slate-800 object-contain" />
+        </div>
+    </div>
 
     <div id="anti-theft-overlay" class="hidden fixed inset-0 z-[120] bg-slate-950/95 backdrop-blur-md items-center justify-center p-6">
         <div class="bg-slate-900 border border-slate-800 rounded-3xl p-7 max-w-md w-full text-center shadow-2xl">
@@ -352,6 +433,21 @@
                             Escucha ambiental inactiva. El módulo de coacción queda separado del sistema de sismos.
                         </div>
                     </div>
+
+                    <div class="mt-4 border-t border-slate-800 pt-4 space-y-2">
+                        <h3 class="text-[10px] font-bold uppercase tracking-wide text-slate-400">Foto de evidencia al correo</h3>
+                        <p class="text-[11px] leading-relaxed text-slate-400">
+                            Registra un correo y la cámara frontal tomará una foto que se envía ahí con tu ubicación cuando envíes un SOS o un pánico, toques un número de emergencia o uses «Apagar sistema». Después de una alerta el correo queda bloqueado 24 horas: nadie con tu dispositivo puede cambiarlo.
+                        </p>
+                        <form onsubmit="App.guardarCorreoSeguridad(event)" class="flex gap-2">
+                            <label for="correo-seguridad" class="sr-only">Correo de seguridad</label>
+                            <input type="email" id="correo-seguridad" maxlength="255" placeholder="tu-correo@ejemplo.com" class="min-w-0 flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500 transition disabled:opacity-60">
+                            <button type="submit" id="btn-guardar-correo-seguridad" class="bg-slate-800 hover:bg-slate-700 text-white font-semibold px-3 py-2 rounded-xl text-xs transition disabled:opacity-50">Guardar</button>
+                        </form>
+                        <div id="correo-seguridad-estado" class="min-h-[1rem] text-[11px] text-slate-400" role="status"></div>
+                        <div id="camara-estado" class="text-[11px] text-slate-400" role="status"></div>
+                        <div id="lista-evidencias" class="space-y-1.5"></div>
+                    </div>
                 </div>
 
                 <!-- Tarjeta Red Familiar -->
@@ -360,21 +456,28 @@
                         <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                             <span>🛡️</span> Red de Protección Familiar
                         </h2>
-                        <span id="codigo-enlace-lbl" class="text-[10px] font-mono bg-slate-950 px-2 py-1 rounded border border-slate-800 text-amber-400 font-bold"></span>
+                        <button type="button" id="codigo-enlace-lbl" onclick="App.copiarMiCodigo()" title="Copiar mi código" class="text-[10px] font-mono bg-slate-950 px-2 py-1 rounded border border-slate-800 text-amber-400 font-bold hover:border-amber-500 transition"></button>
                     </div>
-                    
+                    <p class="text-[11px] leading-relaxed text-slate-400">
+                        Para vincularte con alguien, pídele su código (lo ve arriba como «Mi Código») y escríbelo aquí. Nadie puede invitarte sin que tú le des el tuyo.
+                    </p>
+
                     <form id="form-familiar" onsubmit="App.agregarFamiliar(event)" class="space-y-3">
                         <div>
-                            <input type="text" id="fam-usuario" required placeholder="Usuario GEORESCUE del familiar" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-red-500 transition">
+                            <label for="fam-codigo" class="sr-only">Código de tu familiar</label>
+                            <input type="text" id="fam-codigo" required minlength="4" maxlength="50" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Código de tu familiar (ej. GEO-1A2B3C)" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono uppercase text-white placeholder:normal-case placeholder:font-sans focus:outline-none focus:border-red-500 transition">
                         </div>
                         <div class="grid grid-cols-2 gap-2">
-                            <input type="text" id="fam-parentesco" required placeholder="Parentesco" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-red-500 transition">
+                            <input type="text" id="fam-parentesco" required minlength="2" maxlength="80" placeholder="Parentesco" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-red-500 transition">
                             <span class="text-[10px] text-slate-500 flex items-center">La otra cuenta debe aceptar la invitación</span>
                         </div>
                         <button type="submit" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 rounded-xl text-xs transition">
                             + Enviar invitación
                         </button>
+                        <div id="fam-feedback" class="min-h-[1rem] text-[11px] text-slate-400" role="status"></div>
                     </form>
+
+                    <div id="invitaciones-enviadas" class="space-y-2"></div>
 
                     <div id="lista-familiares" class="space-y-2 pt-2 max-h-48 overflow-y-auto">
                         <!-- Renderizado dinámico -->
@@ -434,6 +537,16 @@
                                 <a href="tel:106" class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-white">SAMU 106</a>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Números locales: fila propia a todo el ancho, debajo de los nacionales -->
+                    <div class="mt-4 rounded-xl border border-amber-700/60 bg-amber-950/40 p-3" role="region" aria-label="Números de emergencia cercanos">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <span class="text-[11px] font-bold uppercase tracking-wide text-amber-300">Cerca de ti</span>
+                            <button type="button" id="btn-numeros-cercanos" onclick="App.mostrarNumerosCercanos()" class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800">Buscar con mi ubicación</button>
+                        </div>
+                        <p id="numeros-cercanos-estado" class="mt-1 text-[10px] leading-relaxed text-slate-400" role="status">La distancia se calcula en este dispositivo: tu ubicación no se envía.</p>
+                        <div id="numeros-cercanos" class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3"></div>
                     </div>
 
                     <!-- Caja de Conteo Regresivo (Oculta por defecto) -->

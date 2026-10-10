@@ -45,16 +45,22 @@ class Settings:
 
     # Módulo antirrobo / correo institucional
     APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:3000")
-    DEFAULT_SECURITY_EMAIL: str = os.getenv("DEFAULT_SECURITY_EMAIL", "soporte@georescue.local")
     SMTP_HOST: str = os.getenv("SMTP_HOST", "")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
     SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
     SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", SMTP_USERNAME or "noreply@georescue.local")
+    # Horas durante las que no se puede cambiar el correo de seguridad después de un
+    # SOS, pánico o evidencia: quien tenga el dispositivo no puede desviar las fotos.
+    SECURITY_EMAIL_LOCK_HOURS: int = int(os.getenv("SECURITY_EMAIL_LOCK_HOURS", "24"))
 
     # SMS firmado: los secretos se suministran exclusivamente por entorno.
     SMS_PROVIDER: str = os.getenv("SMS_PROVIDER", "console").lower()
+    # Solo desarrollo: con SMS_PROVIDER=console, muestra en la terminal del backend el
+    # texto que se habría enviado (por ejemplo el código OTP) para poder probar el
+    # flujo completo sin proveedor. Nunca debe activarse en un servidor real.
+    SMS_CONSOLE_PRINT_MESSAGES: bool = os.getenv("SMS_CONSOLE_PRINT_MESSAGES", "false").lower() in {"1", "true", "yes", "on"}
     SMS_SIGNATURE_HEADER: str = os.getenv("SMS_SIGNATURE_HEADER", "X-SMS-Signature")
     SMS_WEBHOOK_PUBLIC_URL: str = os.getenv("SMS_WEBHOOK_PUBLIC_URL", "")
     SMS_WEBHOOK_SECRET: str = os.getenv("SMS_WEBHOOK_SECRET", "")

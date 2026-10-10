@@ -4,6 +4,7 @@ from datetime import timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -14,6 +15,8 @@ from app.models.user import Usuario
 from app.schemas.admin import (
     InstitutionApprovalRequest,
     InstitutionApplicationItem,
+    InstitutionCoverageItem,
+    InstitutionCoverageRequest,
     InstitutionRejectionRequest,
     InstitutionReviewResponse,
     OwnerLoginRequest,
@@ -21,7 +24,10 @@ from app.schemas.admin import (
     OwnerPasswordChangeRequest,
 )
 from app.core.security import hash_password, verify_password
+from app.schemas.alert import AlertaSinAsignar, AsignacionManualRequest, AsignacionManualResponse
 from app.schemas.subscription import PaymentReviewItem
+from app.services.alert_service import AlertService
+from app.services.realtime import notificar_bandejas
 from app.services.subscription_service import SubscriptionService
 
 router = APIRouter(prefix="/admin", tags=["Administración de plataforma"])
@@ -255,3 +261,107 @@ def rechazar_pago(
         return _payment_item(SubscriptionService(db).review_payment(subscription_id, approve=False))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Cobertura geográfica de instituciones y asignación de alertas
+# ---------------------------------------------------------------------------
+def _institucion_aprobada(db: Session, institution_id: int) -> InstitutionAccount:
+    account = db.query(InstitutionAccount).filter(
+        InstitutionAccount.id == institution_id,
+        InstitutionAccount.is_active.is_(True),
+    ).with_for_update().first()
+    approved = account and db.query(InstitutionApplication).filter(
+        InstitutionApplication.institution_name == account.institution_name,
+        InstitutionApplication.status == "approved",
+    ).first()
+    if not account or not approved:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La institución no existe o no está aprobada y activa.")
+    return account
+
+
+@router.get("/institutions", response_model=list[InstitutionCoverageItem])
+def listar_instituciones_activas(
+    _: dict = Depends(require_rotated_platform_owner),
+    db: Session = Depends(get_db),
+):
+    """Instituciones aprobadas y activas, con la cobertura que tengan validada."""
+    aprobadas = select(InstitutionApplication.institution_name).where(
+        InstitutionApplication.status == "approved",
+    )
+    return db.query(InstitutionAccount).filter(
+        InstitutionAccount.is_active.is_(True),
+        InstitutionAccount.institution_name.in_(aprobadas),
+    ).order_by(InstitutionAccount.institution_name).all()
+
+
+@router.put("/institutions/{institution_id}/coverage", response_model=InstitutionCoverageItem)
+def validar_cobertura(
+    institution_id: int,
+    payload: InstitutionCoverageRequest,
+    owner: dict = Depends(require_rotated_platform_owner),
+    db: Session = Depends(get_db),
+):
+    """Registra la zona que la institución atiende. Desde ese momento recibe en su
+    bandeja las alertas nuevas cuya ubicación caiga dentro del círculo."""
+    from datetime import datetime
+
+    account = _institucion_aprobada(db, institution_id)
+    account.coverage_lat = payload.latitud
+    account.coverage_lng = payload.longitud
+    account.coverage_radius_km = payload.radio_km
+    account.coverage_evidence = payload.evidencia.strip()
+    account.coverage_validated_by = owner.get("sub", "platform-owner")
+    account.coverage_validated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@router.delete("/institutions/{institution_id}/coverage", response_model=InstitutionCoverageItem)
+def retirar_cobertura(
+    institution_id: int,
+    _: dict = Depends(require_rotated_platform_owner),
+    db: Session = Depends(get_db),
+):
+    """Deja de asignar alertas nuevas a la institución. Las ya asignadas se conservan."""
+    account = db.query(InstitutionAccount).filter(
+        InstitutionAccount.id == institution_id,
+    ).with_for_update().first()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La institución no existe.")
+    account.coverage_validated_at = None
+    account.coverage_validated_by = None
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@router.get("/alerts/unassigned", response_model=list[AlertaSinAsignar])
+def listar_alertas_sin_asignar(
+    limit: int = 50,
+    _: dict = Depends(require_rotated_platform_owner),
+    db: Session = Depends(get_db),
+):
+    """Alertas abiertas que ninguna institución tiene en su bandeja."""
+    return AlertService(db).listar_sin_asignar(limit=max(1, min(limit, 200)))
+
+
+@router.post("/alerts/{alert_id}/assign", response_model=AsignacionManualResponse)
+async def asignar_alerta(
+    alert_id: int,
+    payload: AsignacionManualRequest,
+    owner: dict = Depends(require_rotated_platform_owner),
+    db: Session = Depends(get_db),
+):
+    """Asignación manual: para alertas sin ubicación o fuera de toda cobertura."""
+    respuesta = AlertService(db).asignar_manualmente(
+        alerta_id=alert_id,
+        institution_name=payload.institution_name.strip(),
+        actor=owner.get("sub", "platform-owner"),
+        reason=payload.reason.strip(),
+    )
+    await notificar_bandejas([payload.institution_name.strip()], alert_id)
+    return respuesta

@@ -3,6 +3,7 @@ from typing import List
 from app.schemas.alert import AlertStateUpdate, AlertaCreate, AlertaResponse, AlertaDetalle
 from app.services.alert_service import AlertService
 from app.api.deps import get_alert_service, get_current_user, require_permission
+from app.services.realtime import notificar_bandejas
 
 router = APIRouter(prefix="/alertas", tags=["Alertas de Emergencia"])
 
@@ -18,7 +19,10 @@ async def despachar_alerta(
     """
     data.usuario = user["sub"]
     data.dispositivo_id = user["sub"]
-    return alert_service.despachar_alerta(data)
+    respuesta = alert_service.despachar_alerta(data)
+    if respuesta.enrutamiento_institucional:
+        await notificar_bandejas(respuesta.enrutamiento_institucional.instituciones, respuesta.alerta_id)
+    return respuesta
 
 @router.get("/activas/", response_model=List[AlertaDetalle])
 def listar_alertas_activas(
@@ -39,7 +43,7 @@ def listar_buzon_familiar(
 
 
 @router.patch("/{alerta_id}/estado/", response_model=AlertaDetalle)
-def cambiar_estado_alerta(
+async def cambiar_estado_alerta(
     alerta_id: int,
     cambio: AlertStateUpdate,
     user: dict = Depends(get_current_user),
@@ -48,10 +52,12 @@ def cambiar_estado_alerta(
     permisos = set(user.get("permisos") or [])
     if not {"alert:dispatch", "alert:handle"}.intersection(permisos):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No puedes cambiar estados de alertas.")
-    return alert_service.cambiar_estado(
+    detalle = alert_service.cambiar_estado(
         alerta_id=alerta_id,
         usuario=user["sub"],
         rol=user["rol"],
         institucion=user.get("institucion"),
         cambio=cambio,
     )
+    await notificar_bandejas(alert_service.instituciones_asignadas(alerta_id), alerta_id, "alert.updated")
+    return detalle

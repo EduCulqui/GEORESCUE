@@ -31,3 +31,16 @@ class InstitutionalAlertHub:
 
 
 institutional_alert_hub = InstitutionalAlertHub()
+
+
+async def notificar_bandejas(instituciones, alerta_id: int, tipo: str = "alert.created") -> None:
+    """Avisa a las sesiones conectadas de cada institución que su bandeja cambió.
+
+    Es solo un aviso para refrescar la pantalla: la alerta ya está guardada y
+    asignada en la base. Si nadie está conectado no se pierde nada.
+    """
+    for institucion in instituciones or []:
+        await institutional_alert_hub.publish_alert(
+            institucion,
+            {"type": tipo, "alert_id": alerta_id},
+        )

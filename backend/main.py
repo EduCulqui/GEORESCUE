@@ -14,15 +14,20 @@ from app.db.base import Base
 # Importar modelos para que Base.metadata los reconozca al arrancar
 import app.models
 
-# Intentar inicialización de esquema si PostgreSQL está en línea
+# Sincronizar el esquema si PostgreSQL está en línea.
+# create_all no agrega columnas a tablas que ya existen; cuando falta alguna se
+# aplican las migraciones aditivas de database/migrations/ (es seguro repetirlas).
 try:
-    Base.metadata.create_all(bind=engine)
-    # create_all no agrega columnas a tablas que ya existen: se añaden aquí las nuevas.
-    # (Equivale a database/migrations/20261007_pagos_reportados.sql; es seguro repetirlo.)
-    from sqlalchemy import text
-    with engine.begin() as connection:
-        connection.execute(text("ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(40)"))
-        connection.execute(text("ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(120)"))
+    from app.db.esquema import sincronizar_esquema
+
+    migraciones, columnas_pendientes = sincronizar_esquema(engine)
+    for nombre, correcto, detalle in migraciones:
+        print(f"Migración {'aplicada' if correcto else 'CON ERROR'}: {nombre}" + ("" if correcto else f" -> {detalle}"))
+    if columnas_pendientes:
+        print("ATENCIÓN: la base de datos no coincide con el backend y habrá errores 500.")
+        for tabla, columnas in sorted(columnas_pendientes.items()):
+            print(f"  {tabla}: falta {', '.join(columnas)}")
+        print("  Ejecuta desde la raíz del proyecto:  python scripts/preparar_bd.py")
 except UnicodeDecodeError:
     # En Windows en español, psycopg2 no logra leer el mensaje de error de PostgreSQL (tildes).
     print("Nota: PostgreSQL rechazó la conexión. Revisa DB_USER, DB_PASSWORD y DB_NAME en el archivo .env. Iniciando API...")

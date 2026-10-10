@@ -1,12 +1,23 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FamiliarCreate(BaseModel):
-    usuario_invitado: str = Field(..., min_length=1, max_length=100)
+    # La invitación se envía con el código de enlace que la otra persona comparte
+    # (el que ve como "Mi Código"), no con su nombre de usuario: así solo puede
+    # invitarte alguien a quien tú le diste tu código.
+    codigo_invitado: str = Field(..., min_length=4, max_length=50)
     parentesco: str = Field(..., min_length=2, max_length=80)
+
+    @field_validator("codigo_invitado")
+    @classmethod
+    def normalizar_codigo(cls, value: str) -> str:
+        codigo = value.strip().upper()
+        if len(codigo) < 4 or any(caracter.isspace() for caracter in codigo):
+            raise ValueError("Escribe el código tal como aparece, por ejemplo GEO-1A2B3C.")
+        return codigo
 
 
 class FamiliarResponse(BaseModel):

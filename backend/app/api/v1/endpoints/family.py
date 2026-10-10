@@ -12,7 +12,7 @@ def agregar_familiar(
     family_service: FamilyService = Depends(get_family_service),
     user: dict = Depends(require_permission("family:view")),
 ):
-    """Crea una invitación que solo se vuelve vínculo al ser aceptada."""
+    """Invita con el código de enlace del familiar. Solo hay vínculo cuando la otra cuenta acepta."""
     return family_service.agregar_familiar(user["sub"], data)
 
 @router.get("/listar/{usuario_responsable}", response_model=List[FamiliarResponse])
@@ -35,6 +35,14 @@ def invitaciones_recibidas(
     user: dict = Depends(require_permission("family:view")),
 ):
     return family_service.invitaciones_recibidas(user["sub"])
+
+
+@router.get("/invitaciones/enviadas/", response_model=List[FamilyInvitationResponse])
+def invitaciones_enviadas(
+    family_service: FamilyService = Depends(get_family_service),
+    user: dict = Depends(require_permission("family:view")),
+):
+    return family_service.invitaciones_enviadas(user["sub"])
 
 
 @router.post("/invitaciones/{invitation_id}/aceptar/")

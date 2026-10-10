@@ -11,6 +11,7 @@ from app.schemas.sms import (
     PhoneOTPRequest,
     PhoneOTPVerifyRequest,
 )
+from app.services.realtime import notificar_bandejas
 from app.services.sms_service import SMSService
 
 router = APIRouter(tags=["SMS firmado"])
@@ -91,6 +92,12 @@ async def sms_entrante(
     )
     if result["resultado"] == "FIRMA_PROVEEDOR_INVALIDA":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Firma del proveedor SMS inválida.")
+    if result.get("aceptado") and result.get("alerta_id"):
+        await notificar_bandejas(
+            sms_service.alert_service.instituciones_asignadas(result["alerta_id"]),
+            result["alerta_id"],
+            "alert.updated",
+        )
     return result
 
 

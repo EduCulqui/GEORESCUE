@@ -16,28 +16,39 @@ class FamilyService(BaseService):
         self.family_repo = FamilyRepository(db)
 
     def agregar_familiar(self, invitante: str, data: FamiliarCreate) -> Dict[str, Any]:
-        if invitante == data.usuario_invitado:
-            raise DomainException("No puedes vincular tu propia cuenta.", "SELF_LINK")
         invitado = self.db.query(Usuario).filter(
-            Usuario.usuario == data.usuario_invitado,
+            Usuario.codigo_enlace == data.codigo_invitado,
             Usuario.is_active == 1,
             Usuario.rol == "ciudadano",
         ).first()
         if not invitado:
+            # Mismo mensaje para código inexistente, cuenta inactiva o institucional:
+            # no se revela qué códigos existen.
             raise DomainException(
-                "La cuenta invitada no existe, no está activa o no puede usar la red familiar.",
+                "Ese código no corresponde a una cuenta que pueda recibir invitaciones. "
+                "Pídele a tu familiar que te lo vuelva a dictar.",
                 "FAMILY_ACCOUNT_NOT_ELIGIBLE",
             )
+        if invitado.usuario == invitante:
+            raise DomainException("Ese es tu propio código. Necesitas el código de tu familiar.", "SELF_LINK")
+        ya_vinculado = self.db.query(self.family_repo.model_cls).filter(
+            self.family_repo.model_cls.usuario_responsable == invitante,
+            self.family_repo.model_cls.familiar_usuario == invitado.usuario,
+            self.family_repo.model_cls.consentimiento_en.is_not(None),
+            self.family_repo.model_cls.revocado_en.is_(None),
+        ).first()
+        if ya_vinculado:
+            raise DomainException("Esa persona ya está en tu red familiar.", "FAMILY_ALREADY_LINKED")
         existing = self.db.query(FamilyInvitation).filter(
             FamilyInvitation.invitante_usuario == invitante,
-            FamilyInvitation.invitado_usuario == data.usuario_invitado,
+            FamilyInvitation.invitado_usuario == invitado.usuario,
             FamilyInvitation.estado == "PENDIENTE",
         ).first()
         if existing:
             return {"id": existing.id, "estado": existing.estado}
         invitation = FamilyInvitation(
             invitante_usuario=invitante,
-            invitado_usuario=data.usuario_invitado,
+            invitado_usuario=invitado.usuario,
             parentesco=data.parentesco,
             estado="PENDIENTE",
         )
@@ -62,6 +73,13 @@ class FamilyService(BaseService):
                 revocado_en=f.revocado_en,
             ) for f in familiares
         ]
+
+    def invitaciones_enviadas(self, usuario: str) -> List[FamilyInvitationResponse]:
+        """Invitaciones que el usuario envió y aún no fueron respondidas."""
+        return self.db.query(FamilyInvitation).filter(
+            FamilyInvitation.invitante_usuario == usuario,
+            FamilyInvitation.estado == "PENDIENTE",
+        ).order_by(FamilyInvitation.creado_en.desc()).all()
 
     def invitaciones_recibidas(self, usuario: str) -> List[FamilyInvitationResponse]:
         return self.db.query(FamilyInvitation).filter(

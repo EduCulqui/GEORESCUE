@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String
 from app.db.base import Base
 
 class Usuario(Base):
@@ -12,3 +12,7 @@ class Usuario(Base):
     permisos = Column(String(500), default="[]", nullable=False)
     is_active = Column(Integer, default=1, nullable=False)
     codigo_enlace = Column(String(50), unique=True, nullable=False)
+    # Correo al que se envían las alertas antirrobo del propio usuario (opcional).
+    correo_seguridad = Column(String(255), nullable=True)
+    # Hasta cuándo (UTC) queda bloqueado el cambio del correo de seguridad.
+    correo_seguridad_bloqueado_hasta = Column(DateTime, nullable=True)

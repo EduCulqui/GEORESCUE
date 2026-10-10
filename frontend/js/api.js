@@ -128,22 +128,15 @@ const ApiService = {
         for (const pendiente of pendientes) {
             if (pendiente.queue_status !== "PENDING" || pendiente.queue_next_attempt_at > Date.now()) continue;
             try {
-                await this.request(pendiente.queue_endpoint, {
+                // Se reenvía exactamente lo que se intentó enviar la primera vez (incluidos
+                // origen, confirmación y la marca de simulacro), sin los campos internos de la cola.
+                const {
+                    queue_endpoint, queue_status, queue_attempts, queue_next_attempt_at, queue_last_error,
+                    ...payloadOriginal
+                } = pendiente;
+                await this.request(queue_endpoint, {
                     method: "POST",
-                    body: JSON.stringify({
-                        client_alert_id: pendiente.client_alert_id,
-                        usuario: pendiente.usuario,
-                        dispositivo_id: pendiente.dispositivo_id,
-                        tipo_emergencia: pendiente.tipo_emergencia,
-                        nivel_gravedad: pendiente.nivel_gravedad,
-                        latitud: pendiente.latitud,
-                        longitud: pendiente.longitud,
-                        tipo_amenaza: pendiente.tipo_amenaza,
-                        descripcion: pendiente.descripcion,
-                        amenaza_detectada: pendiente.amenaza_detectada,
-                        activar_panic_silencioso: pendiente.activar_panic_silencioso,
-                        timestamp_dispositivo: pendiente.timestamp_dispositivo
-                    })
+                    body: JSON.stringify(payloadOriginal)
                 });
                 await this.eliminarAlertaSOS(pendiente.client_alert_id);
                 window.dispatchEvent(new CustomEvent("georescue:sos-synced", {
@@ -269,6 +262,10 @@ const ApiService = {
         return this.request('/familia/invitaciones/recibidas/');
     },
 
+    async listarInvitacionesEnviadas() {
+        return this.request('/familia/invitaciones/enviadas/');
+    },
+
     async responderInvitacionFamiliar(invitationId, aceptar) {
         const accion = aceptar ? 'aceptar' : 'rechazar';
         return this.request(`/familia/invitaciones/${invitationId}/${accion}/`, { method: 'POST' });
@@ -294,6 +291,13 @@ const ApiService = {
         return this.request('/alertas/activas/');
     },
 
+    async cambiarEstadoAlerta(alertaId, estado) {
+        return this.request(`/alertas/${alertaId}/estado/`, {
+            method: 'PATCH',
+            body: JSON.stringify({ estado })
+        });
+    },
+
     async calcularRuta(payload) {
         return this.request('/rescate/calcular-ruta/', {
             method: 'POST',
@@ -306,6 +310,30 @@ const ApiService = {
             method: 'POST',
             body: JSON.stringify(payload)
         });
+    },
+
+    async obtenerContactoSeguridad() {
+        return this.request('/security/contact');
+    },
+
+    async guardarContactoSeguridad(correo) {
+        return this.request('/security/contact', {
+            method: 'PUT',
+            body: JSON.stringify({ correo })
+        });
+    },
+
+    async listarEvidenciasSeguridad() {
+        return this.request('/security/events');
+    },
+
+    async obtenerFotoEvidencia(eventoId) {
+        return this.request(`/security/events/${eventoId}/photo`);
+    },
+
+    async obtenerDirectorioEmergencia(version) {
+        const consulta = version ? `?version=${encodeURIComponent(version)}` : '';
+        return this.request(`/directorio/emergencia${consulta}`);
     },
 
     async listarPlanes() {
@@ -408,6 +436,63 @@ const ApiService = {
         return this.request(`/admin/payments/${paymentId}/${action}`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` }
+        });
+    },
+
+    // Llamadas del panel de propietarios: usan su token, no el de la sesión de usuario.
+    async requestPropietario(endpoint, options = {}) {
+        const token = sessionStorage.getItem('qgeo_owner_token');
+        return this.request(endpoint, {
+            ...options,
+            headers: { Authorization: `Bearer ${token}`, ...options.headers }
+        });
+    },
+
+    async listarInstitucionesActivas() {
+        return this.requestPropietario('/admin/institutions');
+    },
+
+    async validarCobertura(institutionId, payload) {
+        return this.requestPropietario(`/admin/institutions/${institutionId}/coverage`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async retirarCobertura(institutionId) {
+        return this.requestPropietario(`/admin/institutions/${institutionId}/coverage`, { method: 'DELETE' });
+    },
+
+    async listarAlertasSinAsignar() {
+        return this.requestPropietario('/admin/alerts/unassigned');
+    },
+
+    async resumenDirectorio() {
+        return this.requestPropietario('/admin/directory/summary');
+    },
+
+    async buscarDirectorio(texto) {
+        return this.requestPropietario(`/admin/directory?limit=30&q=${encodeURIComponent(texto || '')}`);
+    },
+
+    async importarDirectorio(payload) {
+        return this.requestPropietario('/admin/directory/import', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async corregirPuntoDirectorio(puntoId, payload) {
+        return this.requestPropietario(`/admin/directory/${puntoId}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async asignarAlerta(alertaId, payload) {
+        return this.requestPropietario(`/admin/alerts/${alertaId}/assign`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
         });
     }
 };

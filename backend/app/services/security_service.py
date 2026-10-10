@@ -1,144 +1,302 @@
 import base64
+import binascii
+import html
 import smtplib
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.message import EmailMessage
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from geoalchemy2.elements import WKTElement
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.domain.exceptions import DomainException, EntityNotFoundException
 from app.models.security import SeguridadEvento
-from app.schemas.security import AntiTheftAlertRequest, AntiTheftAlertResponse
+from app.models.user import Usuario
+from app.schemas.security import (
+    AntiTheftAlertRequest,
+    AntiTheftAlertResponse,
+    SecurityContactResponse,
+    SecurityEventItem,
+    SecurityEventPhoto,
+)
+
+# Tope de evidencias por usuario: evita que una sesión robada o un bucle del
+# navegador llene la base o use el servidor para enviar correo en masa.
+MAX_EVENTOS_POR_HORA = 10
+
+ETIQUETAS_EVENTO = {
+    "ANTI_THEFT": "Modo antirrobo activado",
+    "SOS": "SOS enviado",
+    "PANICO": "Pánico silencioso activado",
+    "LLAMADA_EMERGENCIA": "Llamada a un número de emergencia",
+}
+
+
+class CorreoBloqueado(Exception):
+    """El correo de seguridad no se puede cambiar todavía."""
+
+    def __init__(self, hasta: datetime):
+        super().__init__("Correo de seguridad bloqueado")
+        self.hasta = hasta
 
 
 class SecurityService:
-    """Procesa eventos anti-robo y alerta por correo para el propietario."""
+    """Guarda evidencia antirrobo y avisa por correo al propio titular de la cuenta."""
 
     def __init__(self, db: Session):
         self.db = db
 
-    def process_anti_theft_alert(self, payload: AntiTheftAlertRequest) -> AntiTheftAlertResponse:
-        # Validación básica del payload para evitar basura o contenido corrupto.
-        foto_limpia = self._normalize_base64_image(payload.foto_base64)
+    # ------------------------------------------------------------------
+    # Correo de seguridad del usuario
+    # ------------------------------------------------------------------
+    @staticmethod
+    def servidor_puede_enviar() -> bool:
+        # "smtp.tu-proveedor.com" era el valor de ejemplo de .env.example: no es un servidor real.
+        host = (settings.SMTP_HOST or "").strip().lower()
+        return bool(host) and not host.endswith("tu-proveedor.com")
 
-        event = SeguridadEvento(
-            usuario=payload.usuario or payload.dispositivo_id,
-            dispositivo_id=payload.dispositivo_id or payload.usuario,
-            tipo_evento=payload.tipo_evento or "ANTI_THEFT",
-            latitud=float(payload.latitud),
-            longitud=float(payload.longitud),
-            foto_base64=foto_limpia,
-            correo_destino=payload.correo_destino or settings.DEFAULT_SECURITY_EMAIL,
-            email_enviado=False,
-            ubicacion=WKTElement(f"POINT({payload.longitud} {payload.latitud})", srid=4326),
-            creado_en=datetime.utcnow(),
+    def _cuenta(self, usuario: str) -> Usuario:
+        cuenta = self.db.query(Usuario).filter(Usuario.usuario == usuario).first()
+        if not cuenta:
+            raise EntityNotFoundException("Usuario", usuario)
+        return cuenta
+
+    @staticmethod
+    def _bloqueo_vigente(cuenta: Usuario) -> Optional[datetime]:
+        hasta = cuenta.correo_seguridad_bloqueado_hasta
+        return hasta if hasta and hasta > datetime.utcnow() else None
+
+    def _respuesta_contacto(self, cuenta: Usuario) -> SecurityContactResponse:
+        return SecurityContactResponse(
+            correo=cuenta.correo_seguridad,
+            servidor_puede_enviar=self.servidor_puede_enviar(),
+            # Solo tiene efecto si ya hay un correo que proteger.
+            bloqueado_hasta=self._bloqueo_vigente(cuenta) if cuenta.correo_seguridad else None,
         )
 
+    def obtener_contacto(self, usuario: str) -> SecurityContactResponse:
+        return self._respuesta_contacto(self._cuenta(usuario))
+
+    def guardar_contacto(self, usuario: str, correo: Optional[str]) -> SecurityContactResponse:
+        cuenta = self._cuenta(usuario)
+        bloqueo = self._bloqueo_vigente(cuenta)
+        # Tras un SOS, pánico o evidencia, el correo que ya estaba guardado no se puede
+        # cambiar ni borrar: quien tenga el dispositivo no puede desviar las fotos.
+        # Si aún no había ninguno, registrarlo sí está permitido.
+        if bloqueo and cuenta.correo_seguridad and correo != cuenta.correo_seguridad:
+            raise CorreoBloqueado(bloqueo)
+        cuenta.correo_seguridad = correo
+        self.db.add(cuenta)
+        self.db.commit()
+        return self._respuesta_contacto(cuenta)
+
+    # ------------------------------------------------------------------
+    # Evidencia antirrobo
+    # ------------------------------------------------------------------
+    def limite_alcanzado(self, usuario: str) -> bool:
+        desde = datetime.utcnow() - timedelta(hours=1)
+        recientes = self.db.query(SeguridadEvento).filter(
+            SeguridadEvento.usuario == usuario,
+            SeguridadEvento.creado_en >= desde,
+        ).count()
+        return recientes >= MAX_EVENTOS_POR_HORA
+
+    def process_anti_theft_alert(self, usuario: str, payload: AntiTheftAlertRequest) -> AntiTheftAlertResponse:
+        foto_limpia, mime = self._normalize_base64_image(payload.foto_base64)
+        cuenta = self._cuenta(usuario)
+        tiene_ubicacion = payload.latitud is not None and payload.longitud is not None
+
+        event = SeguridadEvento(
+            usuario=usuario,
+            dispositivo_id=usuario,
+            tipo_evento=(
+                f"{payload.tipo_evento}:{payload.detalle.strip()}"[:60]
+                if payload.detalle and payload.detalle.strip()
+                else payload.tipo_evento
+            ),
+            latitud=float(payload.latitud) if tiene_ubicacion else None,
+            longitud=float(payload.longitud) if tiene_ubicacion else None,
+            foto_base64=f"data:{mime};base64,{foto_limpia}",
+            # Solo el correo que el propio usuario guardó: el destino nunca lo decide la petición.
+            correo_destino=cuenta.correo_seguridad,
+            email_enviado=False,
+            ubicacion=(
+                WKTElement(f"POINT({payload.longitud} {payload.latitud})", srid=4326)
+                if tiene_ubicacion
+                else None
+            ),
+            creado_en=datetime.utcnow(),
+        )
         self.db.add(event)
+        # Desde este momento el correo de seguridad queda fijo por un tiempo.
+        cuenta.correo_seguridad_bloqueado_hasta = event.creado_en + timedelta(hours=settings.SECURITY_EMAIL_LOCK_HOURS)
+        self.db.add(cuenta)
         self.db.commit()
         self.db.refresh(event)
 
-        map_url = self._build_internal_map_url(event.id, payload.latitud, payload.longitud)
-        email_enviado = self._send_security_email(event, map_url)
+        map_url = self._build_map_url(event.latitud, event.longitud)
+        email_enviado, motivo = self._send_security_email(event, map_url)
 
         event.email_enviado = email_enviado
         self.db.add(event)
         self.db.commit()
         self.db.refresh(event)
 
+        if email_enviado:
+            mensaje = f"Evidencia guardada. Se envió un correo a {self._enmascarar(event.correo_destino)}."
+        elif motivo == "SIN_CORREO_DE_SEGURIDAD":
+            mensaje = "Evidencia guardada. No se envió correo: aún no registras un correo de seguridad."
+        elif motivo == "SMTP_NO_CONFIGURADO":
+            mensaje = "Evidencia guardada. No se envió correo: el servidor no tiene correo saliente configurado."
+        else:
+            mensaje = "Evidencia guardada. El correo no pudo enviarse; revísala desde tu cuenta."
+
         return AntiTheftAlertResponse(
             alerta_id=event.id,
-            mensaje="Alerta antirrobo registrada y enviada al titular del dispositivo.",
+            mensaje=mensaje,
             latitud=event.latitud,
             longitud=event.longitud,
             mapa_url=map_url,
             email_enviado=email_enviado,
+            motivo_sin_correo=motivo,
         )
 
+    def listar_eventos(self, usuario: str, limit: int = 10) -> List[SecurityEventItem]:
+        eventos = self.db.query(SeguridadEvento).filter(
+            SeguridadEvento.usuario == usuario,
+        ).order_by(SeguridadEvento.id.desc()).limit(limit).all()
+        return [
+            SecurityEventItem(
+                id=evento.id,
+                tipo_evento=evento.tipo_evento,
+                latitud=evento.latitud,
+                longitud=evento.longitud,
+                email_enviado=bool(evento.email_enviado),
+                creado_en=evento.creado_en,
+            )
+            for evento in eventos
+        ]
+
+    def obtener_foto(self, usuario: str, evento_id: int) -> SecurityEventPhoto:
+        evento = self.db.query(SeguridadEvento).filter(
+            SeguridadEvento.id == evento_id,
+            SeguridadEvento.usuario == usuario,
+        ).first()
+        if not evento:
+            raise EntityNotFoundException("Evidencia", str(evento_id))
+        foto = evento.foto_base64
+        if not foto.startswith("data:image/"):
+            foto = f"data:image/jpeg;base64,{foto}"  # registros anteriores sin cabecera
+        return SecurityEventPhoto(id=evento.id, foto=foto)
+
+    # ------------------------------------------------------------------
+    # Utilidades
+    # ------------------------------------------------------------------
     @staticmethod
-    def _normalize_base64_image(data_url: str) -> str:
-        if not data_url or len(data_url) < 64:
-            raise ValueError("La foto no tiene un contenido válido para generar la alerta.")
-
-        if data_url.startswith("data:image/"):
-            header, _, payload = data_url.partition(",")
-            if payload:
-                return payload
-            raise ValueError("La imagen base64 está incompleta.")
-
-        # Se acepta también el caso de que el cliente ya haya enviado solo el contenido base64.
-        return data_url
-
-    @staticmethod
-    def _detect_image_mime(data_url: str) -> str:
-        if data_url.startswith("data:image/png"):
-            return "image/png"
-        return "image/jpeg"
-
-    @staticmethod
-    def _decode_image(data_url: str) -> bytes:
-        clean = SecurityService._normalize_base64_image(data_url)
-        return base64.b64decode(clean, validate=True)
+    def _normalize_base64_image(data_url: str) -> Tuple[str, str]:
+        """Devuelve (base64 sin cabecera, tipo MIME) tras comprobar que es una imagen real."""
+        mime = "image/jpeg"
+        contenido = (data_url or "").strip()
+        if contenido.startswith("data:"):
+            cabecera, _, contenido = contenido.partition(",")
+            if cabecera.startswith("data:image/png"):
+                mime = "image/png"
+            elif not cabecera.startswith("data:image/jpeg") and not cabecera.startswith("data:image/jpg"):
+                raise DomainException("La evidencia debe ser una imagen JPEG o PNG.", "INVALID_PHOTO")
+        try:
+            binario = base64.b64decode(contenido, validate=True)
+        except (binascii.Error, ValueError):
+            raise DomainException("La foto no es una imagen válida.", "INVALID_PHOTO")
+        es_jpeg = binario.startswith(b"\xff\xd8\xff")
+        es_png = binario.startswith(b"\x89PNG\r\n\x1a\n")
+        if not (es_jpeg or es_png):
+            raise DomainException("La foto no es una imagen JPEG o PNG.", "INVALID_PHOTO")
+        return contenido, "image/png" if es_png else mime
 
     @staticmethod
-    def _build_internal_map_url(alerta_id: int, latitud: float, longitud: float) -> str:
-        base = settings.APP_BASE_URL.rstrip("/")
-        return f"{base}/?lat={latitud}&lon={longitud}&alerta_id={alerta_id}&focus=security"
+    def _build_map_url(latitud: Optional[float], longitud: Optional[float]) -> Optional[str]:
+        if latitud is None or longitud is None:
+            return None
+        return f"https://www.openstreetmap.org/?mlat={latitud}&mlon={longitud}#map=17/{latitud}/{longitud}"
 
-    def _send_security_email(self, event: SeguridadEvento, map_url: str) -> bool:
-        recipient = event.correo_destino or settings.DEFAULT_SECURITY_EMAIL
-        if not settings.SMTP_HOST or not recipient:
-            return False
+    @staticmethod
+    def _enmascarar(correo: Optional[str]) -> str:
+        if not correo or "@" not in correo:
+            return "tu correo"
+        nombre, dominio = correo.split("@", 1)
+        return f"{nombre[:1]}***@{dominio}"
+
+    def _send_security_email(self, event: SeguridadEvento, map_url: Optional[str]) -> Tuple[bool, Optional[str]]:
+        recipient = event.correo_destino
+        if not recipient:
+            return False, "SIN_CORREO_DE_SEGURIDAD"
+        if not self.servidor_puede_enviar():
+            return False, "SMTP_NO_CONFIGURADO"
 
         try:
-            image_bytes = self._decode_image(event.foto_base64)
-            image_mime = self._detect_image_mime(event.foto_base64)
-            image_ext = "png" if image_mime == "image/png" else "jpg"
+            _, _, contenido = event.foto_base64.partition(",")
+            image_bytes = base64.b64decode(contenido or event.foto_base64, validate=True)
+            image_ext = "png" if event.foto_base64.startswith("data:image/png") else "jpeg"
+            # El Perú usa UTC-5 todo el año (no tiene horario de verano).
+            hora = (event.creado_en - timedelta(hours=5)).strftime("%d/%m/%Y %H:%M:%S") + " (hora de Perú)"
+            ubicacion_texto = (
+                f"{event.latitud}, {event.longitud}"
+                if event.latitud is not None and event.longitud is not None
+                else "No disponible (el dispositivo no entregó ubicación)"
+            )
+
+            tipo, _, detalle = (event.tipo_evento or "ANTI_THEFT").partition(":")
+            etiqueta = ETIQUETAS_EVENTO.get(tipo, ETIQUETAS_EVENTO["ANTI_THEFT"])
+            if tipo == "LLAMADA_EMERGENCIA" and detalle:
+                etiqueta = f"Llamada de emergencia al {detalle}"
 
             msg = EmailMessage()
-            msg["Subject"] = f"[GEORESCUE IA] Alerta antirrobo #{event.id}"
+            msg["Subject"] = f"[GEORESCUE IA] {etiqueta} - evidencia #{event.id}"
             msg["From"] = settings.SMTP_FROM_EMAIL or settings.SMTP_USERNAME
             msg["To"] = recipient
             msg.set_content(
-                "Se registró una posible intrusión. Revisa la ubicación del evento y la evidencia adjunta.",
-                subtype="plain",
+                f"{etiqueta} en tu cuenta de GEORESCUE IA.\n\n"
+                f"Usuario: {event.usuario}\n"
+                f"Hora: {hora}\n"
+                f"Ubicación: {ubicacion_texto}\n"
+                + (f"Mapa: {map_url}\n" if map_url else "")
+                + "\nLa foto tomada por la cámara del dispositivo va adjunta. "
+                "Si no fuiste tú, cambia tu contraseña."
             )
 
-            html = f"""
+            enlace_mapa = (
+                f'<p><a href="{html.escape(map_url, quote=True)}" style="color:#2563eb;">Ver la ubicación en el mapa</a></p>'
+                if map_url
+                else ""
+            )
+            cuerpo_html = f"""
             <html>
-              <body style="font-family: Arial, sans-serif; background:#0b1220; color:#e2e8f0; padding:24px;">
-                <h2 style="color:#f87171;">🔒 Alerta antirrobo GEORESCUE IA</h2>
-                <p><strong>Usuario:</strong> {event.usuario or 'Desconocido'}</p>
-                <p><strong>Dispositivo:</strong> {event.dispositivo_id or 'No informado'}</p>
-                <p><strong>Hora:</strong> {event.creado_en.strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
-                <p><strong>Coordenadas:</strong> {event.latitud}, {event.longitud}</p>
-                <p>
-                  <a href="{map_url}" style="color:#60a5fa;">Abrir mapa interno de la alerta</a>
-                </p>
-                <img src="cid:intruso" alt="Evidencia de intrusión" style="max-width:100%; border-radius:12px; border:1px solid #334155;" />
+              <body style="font-family: Arial, sans-serif; color:#0f172a; padding:24px;">
+                <h2 style="color:#b91c1c;">GEORESCUE IA: {html.escape(etiqueta)}</h2>
+                <p>Se guardó una evidencia en tu cuenta.</p>
+                <p><strong>Usuario:</strong> {html.escape(event.usuario or 'Desconocido')}</p>
+                <p><strong>Hora:</strong> {html.escape(hora)}</p>
+                <p><strong>Ubicación:</strong> {html.escape(ubicacion_texto)}</p>
+                {enlace_mapa}
+                <p>La foto tomada por la cámara del dispositivo va adjunta. Si no fuiste tú, cambia tu contraseña.</p>
               </body>
             </html>
             """
-            msg.add_alternative(html, subtype="html")
-            msg.get_payload()[1].set_param("charset", "utf-8")
+            msg.add_alternative(cuerpo_html, subtype="html")
             msg.add_attachment(
                 image_bytes,
                 maintype="image",
                 subtype=image_ext,
-                filename=f"intruso_{event.id}.{image_ext}",
+                filename=f"evidencia_{event.id}.{'png' if image_ext == 'png' else 'jpg'}",
             )
 
-            # Se adjunta la imagen como parte embebida para no depender de un CDN externo.
-            msg.get_payload()[-1].add_header("Content-ID", "<intruso>")
-
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as smtp:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as smtp:
                 if settings.SMTP_USE_TLS:
                     smtp.starttls()
                 if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
                     smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                 smtp.send_message(msg)
-
-            return True
+            return True, None
         except Exception:
-            return False
+            return False, "ERROR_DE_ENVIO"

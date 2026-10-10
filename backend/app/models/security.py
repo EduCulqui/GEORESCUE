@@ -19,9 +19,10 @@ class SeguridadEvento(Base):
     usuario = Column(String(100), index=True, nullable=True)
     dispositivo_id = Column(String(100), index=True, nullable=True)
     tipo_evento = Column(String(60), default="ANTI_THEFT", index=True, nullable=False)
-    latitud = Column(Float, nullable=False)
-    longitud = Column(Float, nullable=False)
-    ubicacion = Column(Geometry(geometry_type='POINT', srid=4326), nullable=False)
+    # La ubicación es opcional: si el dispositivo no la entrega no se inventa una.
+    latitud = Column(Float, nullable=True)
+    longitud = Column(Float, nullable=True)
+    ubicacion = Column(Geometry(geometry_type='POINT', srid=4326), nullable=True)
     foto_base64 = Column(Text, nullable=False)
     correo_destino = Column(String(255), nullable=True)
     email_enviado = Column(Boolean, default=False, nullable=False)

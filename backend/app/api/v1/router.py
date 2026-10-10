@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import admin, auth, family, alerts, rescue, coaccion, cap, security, subscriptions, realtime, sms
+from app.api.v1.endpoints import admin, auth, family, alerts, rescue, coaccion, cap, security, subscriptions, realtime, sms, directory
 
 api_router = APIRouter()
 
@@ -14,3 +14,4 @@ api_router.include_router(subscriptions.router)
 api_router.include_router(realtime.router)
 api_router.include_router(admin.router)
 api_router.include_router(sms.router)
+api_router.include_router(directory.router)

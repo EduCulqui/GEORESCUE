@@ -1,8 +1,8 @@
 import json
 from typing import List, Optional, Tuple, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import exists, func
 from sqlalchemy.exc import IntegrityError
 from geoalchemy2.elements import WKTElement
 from app.repositories.base_repository import BaseRepository
@@ -14,13 +14,84 @@ from app.domain.exceptions import (
 )
 from app.models.alert import AlertOutbox, AlertRecipient, AlertStateHistory, AlertaEmergencia
 from app.models.family import RedFamiliar
+from app.models.subscription import InstitutionAccount
+from app.models.user import Usuario
+from app.core.config import settings
+from app.core.geo import distancia_km
 from app.domain.enums import EstadoConfirmacion
 
 class AlertRepository(BaseRepository[AlertaEmergencia], IAlertRepository):
     """Repositorio geoespacial especializado en PostgreSQL / PostGIS."""
 
+    ESTADOS_ABIERTOS = ("REGISTRADA", "RECIBIDA", "EN_ATENCION")
+
     def __init__(self, db: Session):
         super().__init__(db, AlertaEmergencia)
+
+    # ------------------------------------------------------------------
+    # Asignación institucional por cobertura validada
+    # ------------------------------------------------------------------
+    def institutions_covering(self, latitud: Optional[float], longitud: Optional[float]) -> List[str]:
+        """Instituciones activas cuya cobertura validada contiene el punto.
+
+        La cobertura es un círculo (centro + radio) que el propietario de la
+        plataforma registró y validó. Sin ubicación o sin cobertura validada no
+        se asigna nada: nunca se usa una institución predeterminada.
+        """
+        if latitud is None or longitud is None:
+            return []
+        candidatas = self.db.query(InstitutionAccount).filter(
+            InstitutionAccount.is_active.is_(True),
+            InstitutionAccount.coverage_validated_at.is_not(None),
+        ).all()
+        nombres = []
+        for institucion in candidatas:
+            if (
+                institucion.coverage_lat is None
+                or institucion.coverage_lng is None
+                or institucion.coverage_radius_km is None
+            ):
+                continue
+            distancia = distancia_km(latitud, longitud, institucion.coverage_lat, institucion.coverage_lng)
+            if distancia <= institucion.coverage_radius_km:
+                nombres.append(institucion.institution_name)
+        return sorted(nombres)
+
+    def _add_institution_recipients(self, alert_id: int, nombres: List[str], ahora: datetime) -> List[str]:
+        """Agrega a la bandeja las instituciones que aún no tengan la alerta."""
+        if not nombres:
+            return []
+        ya_asignadas = {
+            fila.recipient_username
+            for fila in self.db.query(AlertRecipient).filter(
+                AlertRecipient.alert_id == alert_id,
+                AlertRecipient.recipient_type == "INSTITUTION",
+            ).all()
+        }
+        nuevas = [nombre for nombre in nombres if nombre not in ya_asignadas]
+        for nombre in nuevas:
+            self.db.add(AlertRecipient(
+                alert_id=alert_id,
+                recipient_type="INSTITUTION",
+                recipient_username=nombre,
+                available_at=ahora,
+            ))
+        return nuevas
+
+    def _lock_security_email(self, usuario: Optional[str], ahora: datetime) -> None:
+        """Desde una alerta real, el correo de seguridad no se puede cambiar por un tiempo."""
+        if not usuario:
+            return
+        cuenta = self.db.query(Usuario).filter(Usuario.usuario == usuario).first()
+        if cuenta is not None:
+            cuenta.correo_seguridad_bloqueado_hasta = ahora + timedelta(hours=settings.SECURITY_EMAIL_LOCK_HOURS)
+
+    def get_institution_recipients(self, alert_id: int) -> List[str]:
+        filas = self.db.query(AlertRecipient).filter(
+            AlertRecipient.alert_id == alert_id,
+            AlertRecipient.recipient_type == "INSTITUTION",
+        ).all()
+        return sorted(fila.recipient_username for fila in filas)
 
     @staticmethod
     def _matches_request(
@@ -130,6 +201,13 @@ class AlertRepository(BaseRepository[AlertaEmergencia], IAlertRepository):
                     recipient_username=link.familiar_usuario,
                     available_at=ahora,
                 ))
+            if not es_simulacro:
+                self._add_institution_recipients(
+                    nueva_alerta.id,
+                    self.institutions_covering(latitud, longitud),
+                    ahora,
+                )
+                self._lock_security_email(usuario, ahora)
             self.db.add(AlertOutbox(
                 alert_id=nueva_alerta.id,
                 event_type="alert.created",
@@ -191,7 +269,7 @@ class AlertRepository(BaseRepository[AlertaEmergencia], IAlertRepository):
         ).with_for_update().first()
         if not alerta:
             raise EntityNotFoundException("Alerta", client_alert_id)
-        if alerta.estado not in {"REGISTRADA", "RECIBIDA", "EN_ATENCION"}:
+        if alerta.estado not in self.ESTADOS_ABIERTOS:
             raise ForbiddenException("La alerta ya no está abierta para actualizar su ubicación.")
         alerta.latitud = latitud
         alerta.longitud = longitud
@@ -199,6 +277,14 @@ class AlertRepository(BaseRepository[AlertaEmergencia], IAlertRepository):
         alerta.precision_m = precision_m
         alerta.edad_lectura_s = edad_lectura_s
         self.db.add(alerta)
+        if not alerta.es_simulacro:
+            # La nueva posición puede caer en la cobertura de otra institución.
+            # Las asignaciones previas se conservan: ya pudieron ser vistas.
+            self._add_institution_recipients(
+                alerta.id,
+                self.institutions_covering(latitud, longitud),
+                datetime.utcnow(),
+            )
         self.db.commit()
         self.db.refresh(alerta)
         return alerta
@@ -273,7 +359,7 @@ class AlertRepository(BaseRepository[AlertaEmergencia], IAlertRepository):
             AlertRecipient.recipient_type == "FAMILY",
             RedFamiliar.consentimiento_en.is_not(None),
             RedFamiliar.revocado_en.is_(None),
-            AlertaEmergencia.estado.in_(("REGISTRADA", "RECIBIDA", "EN_ATENCION")),
+            AlertaEmergencia.estado.in_(self.ESTADOS_ABIERTOS),
         ).order_by(AlertaEmergencia.id.desc()).limit(limit).all()
 
     def get_institution_alerts_with_coords(
@@ -293,8 +379,58 @@ class AlertRepository(BaseRepository[AlertaEmergencia], IAlertRepository):
         ).filter(
             AlertRecipient.recipient_username == institution_name,
             AlertRecipient.recipient_type == "INSTITUTION",
-            AlertaEmergencia.estado.in_(("REGISTRADA", "RECIBIDA", "EN_ATENCION")),
+            AlertaEmergencia.estado.in_(self.ESTADOS_ABIERTOS),
         ).order_by(AlertaEmergencia.id.desc()).limit(limit).all()
+
+    def get_unassigned_open_alerts(self, limit: int = 50) -> List[AlertaEmergencia]:
+        """Alertas reales y abiertas que ninguna institución tiene en su bandeja."""
+        tiene_institucion = exists().where(
+            AlertRecipient.alert_id == AlertaEmergencia.id,
+            AlertRecipient.recipient_type == "INSTITUTION",
+        )
+        return self.db.query(AlertaEmergencia).filter(
+            AlertaEmergencia.estado.in_(self.ESTADOS_ABIERTOS),
+            AlertaEmergencia.es_simulacro.is_(False),
+            ~tiene_institucion,
+        ).order_by(AlertaEmergencia.id.desc()).limit(limit).all()
+
+    def assign_alert_manually(
+        self,
+        alert_id: int,
+        institution_name: str,
+        actor: str,
+        reason: str,
+    ) -> AlertaEmergencia:
+        """Asignación manual por el propietario; queda auditada en el historial."""
+        alerta = self.db.query(AlertaEmergencia).filter(
+            AlertaEmergencia.id == alert_id
+        ).with_for_update().first()
+        if not alerta:
+            raise EntityNotFoundException("Alerta", str(alert_id))
+        if alerta.estado not in self.ESTADOS_ABIERTOS:
+            raise ForbiddenException("La alerta ya está cerrada y no se puede asignar.")
+        if alerta.es_simulacro:
+            raise ForbiddenException("Un simulacro no se asigna a instituciones.")
+        institucion = self.db.query(InstitutionAccount).filter(
+            InstitutionAccount.institution_name == institution_name,
+            InstitutionAccount.is_active.is_(True),
+        ).first()
+        if not institucion:
+            raise EntityNotFoundException("Institución activa", institution_name)
+        ahora = datetime.utcnow()
+        nuevas = self._add_institution_recipients(alerta.id, [institution_name], ahora)
+        if nuevas:
+            self.db.add(AlertStateHistory(
+                alert_id=alerta.id,
+                actor=actor,
+                from_state=alerta.estado,
+                to_state=alerta.estado,
+                changed_at=ahora,
+                reason=f"Asignación manual a {institution_name}: {reason}",
+            ))
+        self.db.commit()
+        self.db.refresh(alerta)
+        return alerta
 
     def transition_alert(
         self,

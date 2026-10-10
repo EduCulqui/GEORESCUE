@@ -12,6 +12,7 @@ def test_despachar_robo_coaccion_does_not_claim_unconfirmed_dispatch(mock_alert_
     mock_alert_repo.return_value.create_spatial_alert.return_value = SimpleNamespace(id=77)
     mock_alert_repo.return_value.create_spatial_alert.return_value.estado = "REGISTRADA"
     mock_alert_repo.return_value.count_family_recipients.return_value = 0
+    mock_alert_repo.return_value.get_institution_recipients.return_value = []
 
     payload = RoboCoaccionCreate(
         client_alert_id=uuid4(),

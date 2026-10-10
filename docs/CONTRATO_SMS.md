@@ -90,11 +90,14 @@ coinciden, la restricción única y la transacción existentes conservan una sol
 alerta. El primer ingreso persistido fija `canal_entrada` (`API` o `SMS`);
 un duplicado no reemplaza evidencia ni genera otra entrada outbox.
 
-La vista institucional `/alertas/activas/` conserva su aislamiento actual:
-solo muestra alertas asignadas a la institución autenticada. Este canal no
-inventa asignación/cobertura institucional; mientras no exista una asignación
-validada, la alerta queda persistida pero no se debe esperar que aparezca en una
-bandeja institucional.
+La vista institucional `/alertas/activas/` conserva su aislamiento: solo
+muestra alertas asignadas a la institución autenticada. Una alerta que entra
+por SMS se asigna igual que una de la API: a las instituciones activas cuya
+cobertura validada por el propietario contiene el punto. Un SMS tipo `U` que
+mueve la alerta dentro de otra cobertura agrega esa institución; las
+asignaciones previas se conservan. Sin cobertura que la contenga, la alerta
+queda persistida y visible para el propietario en *Alertas sin institución
+asignada*; no se inventa una institución.
 
 ## Webhook del proveedor
 
@@ -132,6 +135,7 @@ SMS_WEBHOOK_PUBLIC_URL=
 SMS_WEBHOOK_SECRET=<secreto aleatorio del webhook local>
 SMS_OTP_PEPPER=<secreto aleatorio para hash OTP>
 SMS_DEVICE_ENCRYPTION_KEY=<clave Fernet URL-safe de 32 bytes>
+SMS_CONSOLE_PRINT_MESSAGES=false
 SMS_TIMESTAMP_WINDOW_SECONDS=86400
 SMS_OUTBOUND_LIMIT_COUNT=5
 SMS_OUTBOUND_LIMIT_WINDOW_SECONDS=3600
@@ -144,6 +148,20 @@ No subas los valores reales al repositorio. Una clave Fernet se puede generar
 localmente con `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 La rotación de `SMS_DEVICE_ENCRYPTION_KEY` requiere una migración operativa
 que vuelva a cifrar los secretos antes de retirar la clave anterior.
+
+## Verificar un teléfono sin proveedor (solo desarrollo)
+
+Con `SMS_PROVIDER=console` no se entrega ningún SMS, así que el OTP no puede
+llegar al teléfono y `POST /telefonos/solicitar-otp` responde 503. Para probar
+el flujo completo en una máquina de desarrollo, define
+`SMS_CONSOLE_PRINT_MESSAGES=true`: el texto que se habría enviado (incluido el
+código OTP) se imprime en la terminal donde corre el backend y la solicitud
+responde 200. Esta opción nunca debe activarse en un servidor real: quien lea
+la terminal podría verificar cualquier número.
+
+El recorrido completo (OTP, registro del dispositivo, SMS tipo A, U y C, y su
+aparición en la bandeja institucional) está automatizado en
+`backend/tests/test_postgis_integracion.py`.
 
 ## Simulador local
 
