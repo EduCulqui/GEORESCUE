@@ -14,7 +14,12 @@ const App = {
     mapaCiudadano: null,
     mapaB2G: null,
     marcadorCiudadano: null,
+    circuloCiudadano: null,
     marcadoresB2G: [],
+    // Radio mínimo (m) del círculo de ubicación. Si el GPS informa una precisión
+    // mayor, se dibuja la precisión real: nunca se muestra un círculo más preciso
+    // que la lectura.
+    RADIO_MIN_UBICACION_M: 50,
     polilineaRutaB2G: null,
     marcadorBaseCOER: null,
     timerCuentaRegresiva: null,
@@ -1952,6 +1957,34 @@ const App = {
         this.agregarLogCiudadano("Usuario reportó 'Estoy Bien'. Se evitó el despacho de rescate.");
     },
 
+    // Radio (m) del círculo: la precisión real del GPS, con un mínimo de 50 m.
+    radioUbicacionM(precision) {
+        const p = Number(precision);
+        return Math.max(this.RADIO_MIN_UBICACION_M, Number.isFinite(p) && p > 0 ? p : 0);
+    },
+
+    // Dibuja el marcador y el círculo de ubicación con centro en la posición del usuario.
+    dibujarUbicacionCiudadano(lat, lng, precision, popupHtml, color = '#ef4444', marcador = null) {
+        if (!this.mapaCiudadano || lat === null || lng === null) return;
+        if (this.marcadorCiudadano) this.mapaCiudadano.removeLayer(this.marcadorCiudadano);
+        if (this.circuloCiudadano) this.mapaCiudadano.removeLayer(this.circuloCiudadano);
+
+        const radio = this.radioUbicacionM(precision);
+        this.circuloCiudadano = L.circle([lat, lng], {
+            radius: radio,
+            color,
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.15
+        }).addTo(this.mapaCiudadano);
+
+        this.marcadorCiudadano = (marcador || L.marker([lat, lng]))
+            .addTo(this.mapaCiudadano)
+            .bindPopup(`${popupHtml}<br>Radio: ${Math.round(radio)} m${precision ? ' (precisión del GPS)' : ' (mínimo, sin dato de precisión)'}`)
+            .openPopup();
+        this.mapaCiudadano.fitBounds(this.circuloCiudadano.getBounds(), { maxZoom: 17, padding: [30, 30] });
+    },
+
     obtenerUbicacionReal(callback, mensaje = 'Obteniendo ubicación real...') {
         const indicador = document.getElementById('estado-panic-silencioso');
         if (indicador) {
@@ -1972,6 +2005,7 @@ const App = {
             callback({
                 lat: position.coords.latitude,
                 lng: position.coords.longitude,
+                precision: Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null,
                 fallback: false
             });
         }, () => {
@@ -1996,6 +2030,9 @@ const App = {
         this.geolocalizacionActual = latLng;
         if (latLng.lat !== null && latLng.lng !== null) this.renderNumerosCercanos(latLng.lat, latLng.lng);
         this.evidenciaAutomatica('PANICO', { ubicacion: latLng.lat === null || latLng.lng === null ? null : { lat: latLng.lat, lng: latLng.lng } });
+
+        // El círculo aparece apenas el GPS entrega la ubicación, sin esperar al servidor.
+        this.dibujarUbicacionCiudadano(latLng.lat, latLng.lng, latLng.precision, `<b>📍 Ubicación detectada</b>`, '#a855f7');
 
         try {
             const payload = {
@@ -2025,18 +2062,20 @@ const App = {
 
             this.agregarLogCiudadano(`Alerta #${Number(data.alerta_id)} guardada en el servidor como ${tipo}. ${this.escaparHtml(this.describirEstadoInstitucional(data.enrutamiento_institucional))}`);
 
-            if (this.mapaCiudadano && latLng.lat !== null && latLng.lng !== null) {
-                if (this.marcadorCiudadano) this.mapaCiudadano.removeLayer(this.marcadorCiudadano);
-                this.marcadorCiudadano = L.marker([latLng.lat, latLng.lng], {
-                    icon: L.divIcon({
-                        html: '<div style="background:#a855f7;border:2px solid white;border-radius:999px;width:14px;height:14px;box-shadow:0 0 12px rgba(168,85,247,.9);"></div>',
-                        className: '',
-                        iconSize: [14, 14]
+            if (latLng.lat !== null && latLng.lng !== null) {
+                // Mismo círculo apenas se conoce la ubicación (el pánico se envía primero al servidor).
+                this.dibujarUbicacionCiudadano(
+                    latLng.lat, latLng.lng, latLng.precision,
+                    `<b>🚨 Pánico Silencioso</b><br>Tipo: Robo/Asalto/Coacción`,
+                    '#a855f7',
+                    L.marker([latLng.lat, latLng.lng], {
+                        icon: L.divIcon({
+                            html: '<div style="background:#a855f7;border:2px solid white;border-radius:999px;width:14px;height:14px;box-shadow:0 0 12px rgba(168,85,247,.9);"></div>',
+                            className: '',
+                            iconSize: [14, 14]
+                        })
                     })
-                }).addTo(this.mapaCiudadano)
-                    .bindPopup(`<b>🚨 Pánico Silencioso</b><br>Tipo: Robo/Asalto/Coacción`)
-                    .openPopup();
-                this.mapaCiudadano.setView([latLng.lat, latLng.lng], 15);
+                );
             }
 
             if (this.mapaB2G) {
@@ -2075,6 +2114,12 @@ const App = {
         const lat = ubicacion.lat;
         const lng = ubicacion.lng;
         if (lat !== null && lng !== null) this.renderNumerosCercanos(lat, lng);
+        // El círculo aparece apenas el GPS entrega la ubicación, sin esperar al servidor.
+        this.dibujarUbicacionCiudadano(
+            lat, lng, ubicacion.precision,
+            `<b>📍 Ubicación detectada</b>`,
+            extra.es_simulacro === true ? '#f59e0b' : '#ef4444'
+        );
         // Un simulacro no toma foto ni envía correo.
         if (extra.es_simulacro !== true) {
             this.evidenciaAutomatica('SOS', { ubicacion: lat === null || lng === null ? null : { lat, lng } });
@@ -2100,6 +2145,10 @@ const App = {
                 nivel_gravedad: nivelGravedad,
                 latitud: lat,
                 longitud: lng,
+                // Precisión real de la lectura; sin ella el servidor no puede indicar el radio.
+                ...(ubicacion.precision !== null && ubicacion.precision !== undefined
+                    ? { precision_m: ubicacion.precision, edad_lectura_s: 0 }
+                    : {}),
                 timestamp_dispositivo: new Date().toISOString(),
                 ...extra
             });
@@ -2147,14 +2196,11 @@ const App = {
             }
 
             // Actualizar Marcador en el Mapa
-            if (this.mapaCiudadano && lat !== null && lng !== null) {
-                if (this.marcadorCiudadano) this.mapaCiudadano.removeLayer(this.marcadorCiudadano);
-                this.marcadorCiudadano = L.marker([lat, lng])
-                    .addTo(this.mapaCiudadano)
-                    .bindPopup(`<b>${extra.es_simulacro === true ? 'Simulacro registrado' : '🚨 SOS EN CURSO'}</b><br>ID: #${Number(data.alerta_id)}<br>${this.escaparHtml(tipoEmergencia)}`)
-                    .openPopup();
-                this.mapaCiudadano.setView([lat, lng], 15);
-            }
+            this.dibujarUbicacionCiudadano(
+                lat, lng, ubicacion.precision,
+                `<b>${extra.es_simulacro === true ? 'Simulacro registrado' : '🚨 SOS EN CURSO'}</b><br>ID: #${Number(data.alerta_id)}<br>${this.escaparHtml(tipoEmergencia)}`,
+                extra.es_simulacro === true ? '#f59e0b' : '#ef4444'
+            );
         } catch (err) {
             if (err.alertaLocalGuardada) {
                 this.agregarLogCiudadano('Sin confirmación del servidor. SOS guardado en este dispositivo y pendiente de reintento; usa los teléfonos oficiales visibles arriba si necesitas respuesta inmediata.');
@@ -2309,6 +2355,15 @@ const App = {
                             Confirmación: ${confirmacion}
                         `);
                     this.marcadoresB2G.push(m);
+                    // Círculo centrado en la ubicación reportada: precisión real del GPS, mínimo 50 m.
+                    const circulo = L.circle([a.latitud, a.longitud], {
+                        radius: this.radioUbicacionM(a.precision_m),
+                        color,
+                        weight: 2,
+                        fillColor: color,
+                        fillOpacity: 0.15
+                    }).addTo(this.mapaB2G);
+                    this.marcadoresB2G.push(circulo);
                 }
 
                 return `
