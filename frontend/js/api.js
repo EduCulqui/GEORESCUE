@@ -305,6 +305,10 @@ const ApiService = {
         });
     },
 
+    async obtenerLluvia() {
+        return this.request('/rescate/lluvia/');
+    },
+
     async listarZonasBloqueadas() {
         return this.request('/rescate/zonas-bloqueadas/');
     },

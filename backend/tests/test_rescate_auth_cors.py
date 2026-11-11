@@ -162,3 +162,27 @@ def test_zona_con_datos_invalidos_se_rechaza(client):
     assert client.post("/api/v1/rescate/zonas-bloqueadas/", json={**ZONA, "motivo": "LLUVIA"}).status_code == 422
     assert client.post("/api/v1/rescate/zonas-bloqueadas/", json={**ZONA, "radio_m": 50000}).status_code == 422
     assert client.post("/api/v1/rescate/zonas-bloqueadas/", json={**ZONA, "latitud": 200}).status_code == 422
+
+
+def test_lluvia_exige_sesion_y_permiso_de_mapa(client):
+    assert client.get("/api/v1/rescate/lluvia/").status_code == 401
+    app.dependency_overrides[get_current_user] = lambda: {
+        "sub": "ciudadano-test", "rol": "ciudadano", "permisos": build_permissions_for_role("ciudadano"),
+    }
+    assert client.get("/api/v1/rescate/lluvia/").status_code == 403
+
+
+def test_lluvia_devuelve_la_respuesta_del_servicio(client):
+    from app.api.deps import get_weather_service
+
+    class ServicioFalso:
+        def obtener_lluvia(self):
+            return {"estado": "OK", "fuente": "prueba", "actualizado": "2026-11-10T12:00:00Z", "radio_m": 1650,
+                    "puntos": [{"lat": -7.16, "lng": -78.5, "mm": 3.0, "nivel": "MODERADA"}]}
+
+    app.dependency_overrides[get_current_user] = lambda: {
+        "sub": "operador-test", "rol": "operador", "permisos": build_permissions_for_role("operador"),
+    }
+    app.dependency_overrides[get_weather_service] = ServicioFalso
+    r = client.get("/api/v1/rescate/lluvia/")
+    assert r.status_code == 200 and r.json()["puntos"][0]["nivel"] == "MODERADA"

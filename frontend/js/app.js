@@ -2269,6 +2269,7 @@ const App = {
                     attribution: '© OpenStreetMap - QuantumGeoRescue B2G'
                 }).addTo(this.mapaB2G);
                 this.inicializarZonasBloqueadasB2G();
+                this.inicializarLluviaB2G();
             }, 300);
         } else {
             setTimeout(() => this.mapaB2G.invalidateSize(), 300);
@@ -2463,6 +2464,56 @@ const App = {
 
         } catch (err) {
             contenedor.innerHTML = `<div class="text-xs text-red-400">Error al consultar alertas: ${this.escaparTexto(err.message)}</div>`;
+        }
+    },
+
+    COLORES_LLUVIA: { LIGERA: '#60a5fa', MODERADA: '#facc15', FUERTE: '#ef4444' },
+
+    inicializarLluviaB2G() {
+        if (this._lluviaHooked) return;
+        this._lluviaHooked = true;
+        const casilla = document.getElementById('chk-lluvia');
+        casilla?.addEventListener('change', () => {
+            const leyenda = document.getElementById('lluvia-leyenda');
+            clearInterval(this._temporizadorLluvia);
+            if (casilla.checked) {
+                leyenda.classList.remove('hidden');
+                this.cargarLluviaB2G();
+                // El servidor guarda el dato 15 min: consultar más seguido no aporta nada.
+                this._temporizadorLluvia = setInterval(() => this.cargarLluviaB2G(), 15 * 60 * 1000);
+            } else {
+                leyenda.classList.add('hidden');
+                this.limpiarLluviaB2G();
+            }
+        });
+    },
+
+    limpiarLluviaB2G() {
+        (this.capasLluviaB2G || []).forEach(capa => this.mapaB2G.removeLayer(capa));
+        this.capasLluviaB2G = [];
+    },
+
+    async cargarLluviaB2G() {
+        const estado = document.getElementById('lluvia-estado');
+        try {
+            const r = await ApiService.obtenerLluvia();
+            if (!document.getElementById('chk-lluvia').checked) return;
+            this.limpiarLluviaB2G();
+            if (r.estado === 'NO_DISPONIBLE') {
+                estado.innerText = 'No se pudo consultar la lluvia ahora. No significa que no llueva.';
+                return;
+            }
+            this.capasLluviaB2G = r.puntos.map((p) => L.circle([p.lat, p.lng], {
+                radius: Number(r.radio_m), stroke: false,
+                fillColor: this.COLORES_LLUVIA[p.nivel] || '#60a5fa', fillOpacity: 0.3
+            }).addTo(this.mapaB2G).bindPopup(`Lluvia ${this.escaparTexto(p.nivel.toLowerCase())}: ${Number(p.mm)} mm en la última hora (estimado)`));
+            const hora = r.actualizado ? new Date(r.actualizado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) : '';
+            const desactualizado = r.estado === 'DESACTUALIZADO' ? ' · ⚠ dato desactualizado, el proveedor no respondió' : '';
+            estado.innerText = r.puntos.length
+                ? `Actualizado ${hora}${desactualizado}`
+                : `Sin lluvia estimada en la zona · actualizado ${hora}${desactualizado}`;
+        } catch (error) {
+            estado.innerText = `No se pudo consultar la lluvia: ${error.message}`;
         }
     },
 

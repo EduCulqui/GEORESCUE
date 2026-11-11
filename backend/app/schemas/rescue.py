@@ -52,3 +52,19 @@ class ZonaBloqueadaResponse(BaseModel):
     institucion: Optional[str] = None
     creado_en: datetime
     expira_en: datetime
+
+
+class LluviaPunto(BaseModel):
+    lat: float
+    lng: float
+    mm: float
+    nivel: Literal["LIGERA", "MODERADA", "FUERTE"]
+
+
+class LluviaResponse(BaseModel):
+    # OK, DESACTUALIZADO (dato de hace menos de 1 h porque el proveedor falló) o NO_DISPONIBLE.
+    estado: str
+    fuente: str
+    actualizado: Optional[str] = None
+    radio_m: int
+    puntos: List[LluviaPunto] = Field(default_factory=list)

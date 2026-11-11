@@ -7,6 +7,7 @@ from app.services.auth_service import AuthService
 from app.services.alert_service import AlertService
 from app.services.family_service import FamilyService
 from app.services.rescue_service import RescueService
+from app.services.weather_service import WeatherService
 from app.services.coaccion_service import CoaccionService
 from app.services.cap_service import CAPService
 from app.services.security_service import SecurityService
@@ -31,6 +32,13 @@ def get_family_service(db: Session = Depends(get_db)) -> FamilyService:
 
 def get_rescue_service(db: Session = Depends(get_db)) -> RescueService:
     return RescueService(db)
+
+_weather_service = WeatherService()
+
+
+def get_weather_service() -> WeatherService:
+    # Una sola instancia: la caché se comparte entre todos los usuarios.
+    return _weather_service
 
 def get_coaccion_service(db: Session = Depends(get_db)) -> CoaccionService:
     return CoaccionService(db)

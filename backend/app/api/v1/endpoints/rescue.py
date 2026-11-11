@@ -2,9 +2,10 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.schemas.rescue import RutaRequest, RutaResponse, ZonaBloqueadaCreate, ZonaBloqueadaResponse
+from app.schemas.rescue import LluviaResponse, RutaRequest, RutaResponse, ZonaBloqueadaCreate, ZonaBloqueadaResponse
 from app.services.rescue_service import RescueService
-from app.api.deps import get_rescue_service, require_permission
+from app.api.deps import get_rescue_service, get_weather_service, require_permission
+from app.services.weather_service import WeatherService
 
 router = APIRouter(prefix="/rescate", tags=["Operaciones de Rescate"])
 
@@ -48,3 +49,12 @@ def levantar_zona_bloqueada(
     if not zona:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La zona no existe o ya fue levantada.")
     return zona
+
+
+@router.get("/lluvia/", response_model=LluviaResponse)
+def consultar_lluvia(
+    _: dict = Depends(require_permission("map:view")),
+    weather_service: WeatherService = Depends(get_weather_service),
+):
+    """Lluvia estimada por modelo sobre Cajamarca. Es informativa: no cambia las rutas."""
+    return weather_service.obtener_lluvia()
