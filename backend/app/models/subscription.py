@@ -69,6 +69,11 @@ class InstitutionAccount(Base):
     coverage_evidence = Column(Text, nullable=True)
     coverage_validated_by = Column(String(120), nullable=True)
     coverage_validated_at = Column(DateTime, nullable=True)
+    # Base de salida (cuartel, hospital, COER): punto desde donde se calcula la ruta
+    # hacia la alerta. Si es NULL se usa el centro de la cobertura como respaldo.
+    base_lat = Column(Float, nullable=True)
+    base_lng = Column(Float, nullable=True)
+    base_direccion = Column(String(200), nullable=True)
 
 
 class InstitutionMember(Base):

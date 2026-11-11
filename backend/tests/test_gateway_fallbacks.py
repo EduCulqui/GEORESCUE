@@ -53,7 +53,7 @@ def test_institutional_fallback_does_not_invent_coverage_or_eta():
 
 
 def test_routing_fallback_returns_no_synthetic_route_or_eta():
-    result = EmergencyRoutingGateway().compute_rescue_route(
+    result = EmergencyRoutingGateway(api_key="").compute_rescue_route(
         origen_lat=-12.0,
         origen_lng=-77.0,
         destino_lat=-12.1,

@@ -53,7 +53,7 @@ def test_calcular_ruta_forbids_role_without_map_permission(client):
 
 def test_calcular_ruta_accepts_role_with_map_permission(client):
     class RescueServiceStub:
-        def calcular_ruta_rescate(self, data):
+        def calcular_ruta_rescate(self, data, institucion=None):
             return RutaResponse(
                 origen={"lat": data.origen_lat, "lng": data.origen_lng},
                 destino={"lat": data.destino_lat, "lng": data.destino_lng},

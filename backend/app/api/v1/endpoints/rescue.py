@@ -12,4 +12,4 @@ def calcular_ruta(
     rescue_service: RescueService = Depends(get_rescue_service)
 ):
     """Controlador para cálculo de rutas de rescate con evasión de bloqueos viales."""
-    return rescue_service.calcular_ruta_rescate(data)
+    return rescue_service.calcular_ruta_rescate(data, institucion=user.get("institucion"))

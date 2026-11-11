@@ -16,6 +16,7 @@ from app.schemas.admin import (
     InstitutionApprovalRequest,
     InstitutionApplicationItem,
     InstitutionCoverageItem,
+    InstitutionBaseRequest,
     InstitutionCoverageRequest,
     InstitutionRejectionRequest,
     InstitutionReviewResponse,
@@ -313,6 +314,24 @@ def validar_cobertura(
     account.coverage_evidence = payload.evidencia.strip()
     account.coverage_validated_by = owner.get("sub", "platform-owner")
     account.coverage_validated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@router.put("/institutions/{institution_id}/base", response_model=InstitutionCoverageItem)
+def registrar_base(
+    institution_id: int,
+    payload: InstitutionBaseRequest,
+    _: dict = Depends(require_rotated_platform_owner),
+    db: Session = Depends(get_db),
+):
+    """Registra la base desde donde salen las unidades. Es el origen de las rutas."""
+    account = _institucion_aprobada(db, institution_id)
+    account.base_lat = payload.latitud
+    account.base_lng = payload.longitud
+    account.base_direccion = (payload.direccion or "").strip() or None
     db.add(account)
     db.commit()
     db.refresh(account)

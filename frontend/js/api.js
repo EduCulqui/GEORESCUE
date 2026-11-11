@@ -459,6 +459,13 @@ const ApiService = {
         });
     },
 
+    async registrarBase(institutionId, payload) {
+        return this.requestPropietario(`/admin/institutions/${institutionId}/base`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+
     async retirarCobertura(institutionId) {
         return this.requestPropietario(`/admin/institutions/${institutionId}/coverage`, { method: 'DELETE' });
     },

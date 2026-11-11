@@ -29,8 +29,8 @@ def get_alert_service(db: Session = Depends(get_db)) -> AlertService:
 def get_family_service(db: Session = Depends(get_db)) -> FamilyService:
     return FamilyService(db)
 
-def get_rescue_service() -> RescueService:
-    return RescueService()
+def get_rescue_service(db: Session = Depends(get_db)) -> RescueService:
+    return RescueService(db)
 
 def get_coaccion_service(db: Session = Depends(get_db)) -> CoaccionService:
     return CoaccionService(db)

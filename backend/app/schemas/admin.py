@@ -72,6 +72,16 @@ class InstitutionCoverageItem(BaseModel):
     coverage_evidence: Optional[str] = None
     coverage_validated_by: Optional[str] = None
     coverage_validated_at: Optional[datetime] = None
+    base_lat: Optional[float] = None
+    base_lng: Optional[float] = None
+    base_direccion: Optional[str] = None
+
+
+class InstitutionBaseRequest(BaseModel):
+    """Punto de salida de la institución (donde parten las unidades de rescate)."""
+    latitud: float = Field(..., ge=-90, le=90)
+    longitud: float = Field(..., ge=-180, le=180)
+    direccion: Optional[str] = Field(default=None, max_length=200)
 
 
 class InstitutionCoverageRequest(BaseModel):

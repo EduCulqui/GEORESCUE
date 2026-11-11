@@ -290,7 +290,19 @@ const App = {
             const card = button.closest('[data-coverage-institution]');
             const institutionId = Number(card.dataset.coverageInstitution);
             try {
-                if (button.dataset.coverageAction === 'remove') {
+                if (button.dataset.coverageAction === 'base') {
+                    const latitud = Number(card.querySelector('[data-base-lat]').value);
+                    const longitud = Number(card.querySelector('[data-base-lng]').value);
+                    const direccion = card.querySelector('[data-base-direccion]').value.trim();
+                    const vacio = ['[data-base-lat]', '[data-base-lng]']
+                        .some((selector) => card.querySelector(selector).value.trim() === '');
+                    if (vacio || !Number.isFinite(latitud) || !Number.isFinite(longitud) || latitud < -90 || latitud > 90 || longitud < -180 || longitud > 180) {
+                        alert('Escribe la latitud y la longitud de la base en grados decimales, por ejemplo -7.164414 y -78.509673.');
+                        return;
+                    }
+                    button.disabled = true;
+                    await ApiService.registrarBase(institutionId, { latitud, longitud, direccion });
+                } else if (button.dataset.coverageAction === 'remove') {
                     if (!window.confirm('¿Retirar la cobertura? La institución dejará de recibir alertas nuevas. Las que ya tiene se conservan.')) return;
                     button.disabled = true;
                     await ApiService.retirarCobertura(institutionId);
@@ -394,6 +406,24 @@ const App = {
                     <label class="mt-2 block text-slate-300">Evidencia de que atiende esa zona
                         <textarea data-coverage-evidence rows="2" minlength="10" placeholder="Documento, resolución o fuente oficial que consultaste" class="mt-1 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white">${this.escaparTexto(item.coverage_evidence || '')}</textarea>
                     </label>
+                    <div class="mt-4 border-t border-slate-800 pt-3">
+                        <p class="font-semibold text-slate-200">Base de salida (origen de las rutas)</p>
+                        <p class="mt-1 text-[10px] text-slate-500">Clic derecho sobre el edificio en Google Maps y copia los dos números. Sin base, la ruta sale del centro de la cobertura.</p>
+                        <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <label class="text-slate-300">Latitud de la base
+                                <input data-base-lat type="number" step="any" min="-90" max="90" value="${valor(item.base_lat)}" placeholder="-7.164414" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white" />
+                            </label>
+                            <label class="text-slate-300">Longitud de la base
+                                <input data-base-lng type="number" step="any" min="-180" max="180" value="${valor(item.base_lng)}" placeholder="-78.509673" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white" />
+                            </label>
+                        </div>
+                        <label class="mt-2 block text-slate-300">Dirección (opcional)
+                            <input data-base-direccion type="text" maxlength="200" value="${valor(item.base_direccion)}" placeholder="Av. Atahualpa N.° 107" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white" />
+                        </label>
+                        <div class="mt-2 flex justify-end">
+                            <button type="button" data-coverage-action="base" class="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-600">${item.base_lat !== null && item.base_lat !== undefined ? 'Actualizar base' : 'Guardar base'}</button>
+                        </div>
+                    </div>
                     <div class="mt-3 flex justify-end gap-2">
                         ${validada ? '<button type="button" data-coverage-action="remove" class="rounded-lg border border-red-800 px-3 py-2 text-xs text-red-300 hover:bg-red-950">Retirar cobertura</button>' : ''}
                         <button type="button" data-coverage-action="save" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600">${validada ? 'Actualizar cobertura' : 'Validar cobertura'}</button>
@@ -2258,6 +2288,15 @@ const App = {
         if (this._bandejaHooked) return;
         this._bandejaHooked = true;
         document.getElementById('lista-alertas-b2g')?.addEventListener('click', async (event) => {
+            const botonRuta = event.target.closest('[data-route-alert]');
+            if (botonRuta) {
+                await this.calcularRutaRescateB2G(
+                    Number(botonRuta.dataset.routeLat),
+                    Number(botonRuta.dataset.routeLng),
+                    Number(botonRuta.dataset.routeAlert)
+                );
+                return;
+            }
             const button = event.target.closest('[data-alert-state]');
             if (!button) return;
             const alertaId = Number(button.dataset.alertId);
@@ -2333,7 +2372,10 @@ const App = {
                 const calidadUbicacion = tieneUbicacion && a.precision_m !== null && a.precision_m !== undefined
                     ? ` (±${Number(a.precision_m)} m${a.edad_lectura_s ? `, lectura de hace ${Number(a.edad_lectura_s)} s` : ''})`
                     : '';
-                const acciones = (this.ACCIONES_ALERTA[a.estado] || []).map(([siguiente, etiqueta]) => `
+                const botonRuta = tieneUbicacion && !atendida
+                    ? `<button type="button" data-route-alert="${a.id}" data-route-lat="${a.latitud}" data-route-lng="${a.longitud}" class="rounded-lg border border-cyan-700 bg-cyan-950 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-200 hover:bg-cyan-900">Ver ruta</button>`
+                    : '';
+                const acciones = botonRuta + (this.ACCIONES_ALERTA[a.estado] || []).map(([siguiente, etiqueta]) => `
                     <button type="button" data-alert-id="${a.id}" data-alert-state="${siguiente}" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-slate-700">${etiqueta}</button>
                 `).join('');
 
@@ -2423,10 +2465,41 @@ const App = {
         }
     },
 
+    MENSAJES_RUTA: {
+        PROVEEDOR_DE_RUTAS_NO_CONFIGURADO: 'El servidor no tiene configurada la clave del proveedor de rutas.',
+        PROVEEDOR_DE_RUTAS_CLAVE_RECHAZADA: 'El proveedor de rutas rechazó la clave. Hay que revisarla o cambiarla.',
+        PROVEEDOR_DE_RUTAS_NO_DISPONIBLE: 'El proveedor de rutas no respondió. Intenta de nuevo en unos segundos.',
+        PROVEEDOR_DE_RUTAS_RESPUESTA_INVALIDA: 'El proveedor de rutas respondió algo inesperado. No se muestra ruta.',
+        INSTITUCION_SIN_BASE_NI_COBERTURA: 'Tu institución aún no tiene base registrada ni cobertura validada. Pídele al propietario que registre la base.'
+    },
+
     async calcularRutaRescateB2G(destLat, destLng, alertaId) {
-        document.getElementById('ruta-estado').innerText =
-            `No se puede calcular una ruta para la alerta #${alertaId}: proveedor no configurado.`;
-        document.getElementById('ruta-tiempo').innerText = 'ETA no disponible';
+        const estado = document.getElementById('ruta-estado');
+        const tiempo = document.getElementById('ruta-tiempo');
+        estado.innerText = `Calculando ruta a la alerta #${alertaId}...`;
+        tiempo.innerText = '';
+        try {
+            const r = await ApiService.calcularRuta({ destino_lat: destLat, destino_lng: destLng });
+            if (this.capaRutaB2G) {
+                this.capaRutaB2G.forEach(capa => this.mapaB2G.removeLayer(capa));
+            }
+            this.capaRutaB2G = [];
+            if (r.estado_algoritmo !== 'RUTA_CALCULADA' || !r.puntos_ruta.length) {
+                estado.innerText = this.MENSAJES_RUTA[r.estado_algoritmo] || `No se pudo calcular la ruta (${r.estado_algoritmo}).`;
+                return;
+            }
+            const linea = L.polyline(r.puntos_ruta, { color: '#22d3ee', weight: 5, opacity: 0.9 }).addTo(this.mapaB2G);
+            const base = L.circleMarker([r.origen.lat, r.origen.lng], {
+                radius: 8, color: '#ffffff', weight: 2, fillColor: '#06b6d4', fillOpacity: 1
+            }).addTo(this.mapaB2G).bindPopup(r.origen_tipo === 'BASE_INSTITUCION' ? 'Base de la institución' : 'Centro de cobertura (respaldo: aún no hay base registrada)');
+            this.capaRutaB2G.push(linea, base);
+            this.mapaB2G.fitBounds(linea.getBounds(), { padding: [40, 40] });
+            const origen = r.origen_tipo === 'BASE_INSTITUCION' ? 'desde la base' : 'desde el centro de cobertura';
+            estado.innerText = `Ruta por calles ${origen} hasta la alerta #${alertaId}`;
+            tiempo.innerText = `${r.distancia_km} km · ${r.tiempo_estimado}`;
+        } catch (error) {
+            estado.innerText = `No se pudo calcular la ruta: ${error.message}`;
+        }
     }
 };
 
