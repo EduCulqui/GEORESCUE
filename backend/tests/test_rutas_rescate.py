@@ -7,6 +7,7 @@ from datetime import datetime
 
 import httpx
 
+from app.core.geo import distancia_minima_a_ruta_m, puntos_a_evitar
 from app.infrastructure.gateways.routing_gateway import EmergencyRoutingGateway
 from app.schemas.rescue import RutaRequest
 from app.services.rescue_service import RescueService
@@ -107,6 +108,12 @@ class DbConCuenta:
     def first(self):
         return self.cuenta
 
+    def order_by(self, *_args):
+        return self
+
+    def all(self):
+        return getattr(self, "zonas", [])
+
 
 def cuenta(base=None, cobertura=None, validada=True):
     return SimpleNamespace(
@@ -145,3 +152,92 @@ def test_origen_manual_tiene_prioridad():
     gw = GatewayFalso()
     r = pedir(RescueService(DbConCuenta(cuenta(base=BOMBEROS_59)), gw), origen_lat=-7.2, origen_lng=-78.4)
     assert r.origen_tipo == "MANUAL" and gw.llamadas[0]["origen_lat"] == -7.2
+
+
+# ---------------------------------------------------------------- zonas bloqueadas
+RUTA_RECTA = [[-7.1644, -78.5097], [-7.1700, -78.5100]]  # baja por la misma avenida
+
+
+def zona(id_=1, lat=-7.1670, lng=-78.5099, radio=100):
+    return {"id": id_, "latitud": lat, "longitud": lng, "radio_m": radio}
+
+
+def test_distancia_a_ruta_mide_contra_el_tramo_y_no_solo_los_vertices():
+    # El punto está en medio del tramo, lejos de ambos vértices (~290 m).
+    assert distancia_minima_a_ruta_m(-7.1672, -78.50985, RUTA_RECTA) < 30
+    # Un punto a ~1 km al este queda lejos.
+    assert distancia_minima_a_ruta_m(-7.1670, -78.5000, RUTA_RECTA) > 900
+
+
+def test_zona_pequena_se_evita_con_un_punto_y_grande_con_cinco():
+    assert len(puntos_a_evitar(-7.167, -78.51, 100)) == 1
+    assert len(puntos_a_evitar(-7.167, -78.51, 300)) == 5
+
+
+def test_gateway_envia_avoid_y_confirma_cuando_la_ruta_no_cruza_la_zona():
+    pedidos = []
+
+    def handler(request):
+        pedidos.append(request)
+        return httpx.Response(200, json=respuesta_geoapify())
+
+    gw = EmergencyRoutingGateway(api_key="k", client=cliente_simulado(handler))
+    lejos = zona(lat=-7.1670, lng=-78.4900)  # ~2 km al este de la ruta
+    r = gw.compute_rescue_route(*BOMBEROS_59, *DESTINO, zonas_bloqueadas=[lejos])
+
+    assert pedidos[0].url.params["avoid"] == f"location:{lejos['latitud']},{lejos['longitud']}"
+    assert r["bloqueos_evitados"] is True
+    assert r["zonas_consideradas"] == 1 and r["zonas_cruzadas"] == []
+
+
+def test_gateway_no_afirma_que_evito_la_zona_si_la_ruta_sigue_cruzandola():
+    gw = EmergencyRoutingGateway(api_key="k", client=cliente_simulado(
+        lambda request: httpx.Response(200, json=respuesta_geoapify())))
+    sobre_la_ruta = zona(id_=7, lat=-7.1672, lng=-78.50985, radio=100)
+    r = gw.compute_rescue_route(*BOMBEROS_59, *DESTINO, zonas_bloqueadas=[sobre_la_ruta])
+
+    assert r["bloqueos_evitados"] is False
+    assert r["zonas_cruzadas"] == [7]
+
+
+def test_sin_zonas_no_se_envia_avoid_ni_se_afirma_nada():
+    pedidos = []
+
+    def handler(request):
+        pedidos.append(request)
+        return httpx.Response(200, json=respuesta_geoapify())
+
+    r = EmergencyRoutingGateway(api_key="k", client=cliente_simulado(handler)).compute_rescue_route(*BOMBEROS_59, *DESTINO)
+    assert "avoid" not in pedidos[0].url.params
+    assert r["bloqueos_evitados"] is None
+
+
+def test_tope_de_reglas_avoid():
+    pedidos = []
+
+    def handler(request):
+        pedidos.append(request)
+        return httpx.Response(200, json=respuesta_geoapify())
+
+    zonas = [zona(id_=i, lat=-7.1670 + i * 0.0001, radio=300) for i in range(6)]  # 30 puntos
+    EmergencyRoutingGateway(api_key="k", client=cliente_simulado(handler)).compute_rescue_route(
+        *BOMBEROS_59, *DESTINO, zonas_bloqueadas=zonas)
+    assert len(pedidos[0].url.params["avoid"].split("|")) == 15
+
+
+class ZonaFalsa(SimpleNamespace):
+    pass
+
+
+def test_el_servicio_pasa_solo_las_zonas_cercanas_a_la_ruta():
+    gw = GatewayFalso()
+    db = DbConCuenta(cuenta(base=BOMBEROS_59))
+    cerca = ZonaFalsa(id=1, latitud=-7.1670, longitud=-78.5099, radio_m=100)
+    lejos = ZonaFalsa(id=2, latitud=-8.5, longitud=-77.0, radio_m=100)  # otra provincia
+    db.zonas = [cerca, lejos]
+    r = pedir(RescueService(db, gw))
+
+    enviadas = gw.llamadas[0]["zonas_bloqueadas"]
+    assert [z["id"] for z in enviadas] == [1]
+    assert gw.llamadas[0]["evitar_bloqueos"] is True
+    assert r.zonas_consideradas == 0  # el gateway falso no informa zonas: no se inventa

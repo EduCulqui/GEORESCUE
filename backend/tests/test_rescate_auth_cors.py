@@ -128,3 +128,37 @@ def test_production_settings_require_allowed_origins():
 
     assert result.returncode != 0
     assert "ALLOWED_ORIGINS debe configurarse cuando ENV=production." in result.stderr
+
+
+ZONA = {"latitud": -7.167, "longitud": -78.51, "motivo": "INUNDACION"}
+
+
+def test_zonas_bloqueadas_exigen_sesion(client):
+    assert client.get("/api/v1/rescate/zonas-bloqueadas/").status_code == 401
+    assert client.post("/api/v1/rescate/zonas-bloqueadas/", json=ZONA).status_code == 401
+
+
+def test_ciudadano_no_puede_marcar_ni_levantar_zonas(client):
+    app.dependency_overrides[get_current_user] = lambda: {
+        "sub": "ciudadano-test",
+        "rol": "ciudadano",
+        "permisos": build_permissions_for_role("ciudadano"),
+    }
+    assert client.post("/api/v1/rescate/zonas-bloqueadas/", json=ZONA).status_code == 403
+    assert client.delete("/api/v1/rescate/zonas-bloqueadas/1").status_code == 403
+    assert client.get("/api/v1/rescate/zonas-bloqueadas/").status_code == 403
+
+
+def test_zona_con_datos_invalidos_se_rechaza(client):
+    app.dependency_overrides[get_current_user] = lambda: {
+        "sub": "operador-test",
+        "rol": "operador",
+        "permisos": build_permissions_for_role("operador"),
+    }
+    class ServicioFalso:
+        def crear_zona(self, *args, **kwargs):
+            raise AssertionError("no debe llegar al servicio")
+    app.dependency_overrides[get_rescue_service] = ServicioFalso
+    assert client.post("/api/v1/rescate/zonas-bloqueadas/", json={**ZONA, "motivo": "LLUVIA"}).status_code == 422
+    assert client.post("/api/v1/rescate/zonas-bloqueadas/", json={**ZONA, "radio_m": 50000}).status_code == 422
+    assert client.post("/api/v1/rescate/zonas-bloqueadas/", json={**ZONA, "latitud": 200}).status_code == 422

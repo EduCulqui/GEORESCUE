@@ -3,6 +3,7 @@ from app.models.family import FamilyInvitation, RedFamiliar
 from app.models.alert import AlertOutbox, AlertRecipient, AlertStateHistory, AlertaEmergencia
 from app.models.security import SeguridadEvento
 from app.models.directory import PuntoEmergencia
+from app.models.rescue import ZonaBloqueada
 from app.models.sms import (
     DeviceSigningKey,
     DiscardedSMS,

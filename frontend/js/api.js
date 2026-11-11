@@ -305,6 +305,21 @@ const ApiService = {
         });
     },
 
+    async listarZonasBloqueadas() {
+        return this.request('/rescate/zonas-bloqueadas/');
+    },
+
+    async marcarZonaBloqueada(payload) {
+        return this.request('/rescate/zonas-bloqueadas/', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async levantarZonaBloqueada(zonaId) {
+        return this.request(`/rescate/zonas-bloqueadas/${Number(zonaId)}`, { method: 'DELETE' });
+    },
+
     async enviarAlertaSeguridad(payload) {
         return this.request('/security/anti-theft-alert', {
             method: 'POST',

@@ -1,5 +1,8 @@
-from fastapi import APIRouter, Depends
-from app.schemas.rescue import RutaRequest, RutaResponse
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from app.schemas.rescue import RutaRequest, RutaResponse, ZonaBloqueadaCreate, ZonaBloqueadaResponse
 from app.services.rescue_service import RescueService
 from app.api.deps import get_rescue_service, require_permission
 
@@ -11,5 +14,37 @@ def calcular_ruta(
     user: dict = Depends(require_permission("map:view")),
     rescue_service: RescueService = Depends(get_rescue_service)
 ):
-    """Controlador para cálculo de rutas de rescate con evasión de bloqueos viales."""
+    """Cálculo de ruta de rescate por calles, evitando las zonas bloqueadas vigentes."""
     return rescue_service.calcular_ruta_rescate(data, institucion=user.get("institucion"))
+
+
+@router.get("/zonas-bloqueadas/", response_model=List[ZonaBloqueadaResponse])
+def listar_zonas_bloqueadas(
+    _: dict = Depends(require_permission("map:view")),
+    rescue_service: RescueService = Depends(get_rescue_service),
+):
+    """Zonas vigentes. Un bloqueo es un hecho físico: lo ven todas las instituciones."""
+    return rescue_service.zonas_activas()
+
+
+@router.post("/zonas-bloqueadas/", response_model=ZonaBloqueadaResponse, status_code=status.HTTP_201_CREATED)
+def marcar_zona_bloqueada(
+    data: ZonaBloqueadaCreate,
+    user: dict = Depends(require_permission("alert:handle")),
+    rescue_service: RescueService = Depends(get_rescue_service),
+):
+    """Marca una zona como no transitable. Vence sola a las horas indicadas."""
+    return rescue_service.crear_zona(data, usuario=user.get("sub", "desconocido"), institucion=user.get("institucion"))
+
+
+@router.delete("/zonas-bloqueadas/{zona_id}", response_model=ZonaBloqueadaResponse)
+def levantar_zona_bloqueada(
+    zona_id: int,
+    user: dict = Depends(require_permission("alert:handle")),
+    rescue_service: RescueService = Depends(get_rescue_service),
+):
+    """Levanta el bloqueo (la zona deja de evitarse). Queda registrado quién lo levantó."""
+    zona = rescue_service.levantar_zona(zona_id, usuario=user.get("sub", "desconocido"))
+    if not zona:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La zona no existe o ya fue levantada.")
+    return zona

@@ -38,7 +38,8 @@ class IRoutingGateway(ABC):
         origen_lng: float,
         destino_lat: float,
         destino_lng: float,
-        evitar_bloqueos: bool = False
+        evitar_bloqueos: bool = False,
+        zonas_bloqueadas: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         pass
 

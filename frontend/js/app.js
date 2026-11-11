@@ -2268,6 +2268,7 @@ const App = {
                     maxZoom: 19,
                     attribution: '© OpenStreetMap - QuantumGeoRescue B2G'
                 }).addTo(this.mapaB2G);
+                this.inicializarZonasBloqueadasB2G();
             }, 300);
         } else {
             setTimeout(() => this.mapaB2G.invalidateSize(), 300);
@@ -2465,6 +2466,97 @@ const App = {
         }
     },
 
+    NOMBRES_MOTIVO_ZONA: { INUNDACION: 'Inundación', DERRUMBE: 'Derrumbe', CIERRE_VIAL: 'Cierre vial', OTRO: 'Otro' },
+
+    inicializarZonasBloqueadasB2G() {
+        this.cargarZonasBloqueadasB2G();
+        if (this._zonasHooked) return;
+        this._zonasHooked = true;
+        const form = document.getElementById('zona-form');
+        const cerrar = () => {
+            this.modoMarcarZona = false;
+            this.puntoZonaPendiente = null;
+            if (this.marcadorZonaPendiente) { this.mapaB2G.removeLayer(this.marcadorZonaPendiente); this.marcadorZonaPendiente = null; }
+            form.classList.add('hidden');
+            this.mapaB2G.getContainer().style.cursor = '';
+        };
+        document.getElementById('btn-marcar-zona')?.addEventListener('click', () => {
+            this.modoMarcarZona = true;
+            form.classList.remove('hidden');
+            document.getElementById('zona-form-ayuda').innerText = 'Haz clic en el mapa donde está el bloqueo.';
+            this.mapaB2G.getContainer().style.cursor = 'crosshair';
+        });
+        document.getElementById('zona-cancelar')?.addEventListener('click', cerrar);
+        this.mapaB2G.on('click', (evento) => {
+            if (!this.modoMarcarZona) return;
+            this.puntoZonaPendiente = evento.latlng;
+            if (this.marcadorZonaPendiente) this.mapaB2G.removeLayer(this.marcadorZonaPendiente);
+            this.marcadorZonaPendiente = L.circleMarker(evento.latlng, { radius: 7, color: '#fb923c', weight: 3, fillOpacity: 0.4 }).addTo(this.mapaB2G);
+            document.getElementById('zona-form-ayuda').innerText =
+                `Punto elegido: ${evento.latlng.lat.toFixed(5)}, ${evento.latlng.lng.toFixed(5)}. Completa los datos y guarda.`;
+        });
+        document.getElementById('zona-guardar')?.addEventListener('click', async (evento) => {
+            if (!this.puntoZonaPendiente) { alert('Primero haz clic en el mapa donde está el bloqueo.'); return; }
+            const radio = Number(document.getElementById('zona-radio').value);
+            const horas = Number(document.getElementById('zona-horas').value);
+            if (!(radio >= 20 && radio <= 2000)) { alert('El radio debe estar entre 20 y 2000 metros.'); return; }
+            if (!(horas >= 1 && horas <= 72)) { alert('La duración debe estar entre 1 y 72 horas.'); return; }
+            const boton = evento.currentTarget;
+            boton.disabled = true;
+            try {
+                await ApiService.marcarZonaBloqueada({
+                    latitud: this.puntoZonaPendiente.lat,
+                    longitud: this.puntoZonaPendiente.lng,
+                    radio_m: radio,
+                    motivo: document.getElementById('zona-motivo').value,
+                    nota: document.getElementById('zona-nota').value.trim() || null,
+                    duracion_horas: horas
+                });
+                document.getElementById('zona-nota').value = '';
+                cerrar();
+                await this.cargarZonasBloqueadasB2G();
+            } catch (error) {
+                alert(`No se pudo marcar la zona: ${error.message}`);
+            } finally {
+                boton.disabled = false;
+            }
+        });
+        // El botón "Levantar" vive dentro del popup de cada zona.
+        document.addEventListener('click', async (evento) => {
+            const boton = evento.target.closest('[data-zona-levantar]');
+            if (!boton) return;
+            if (!window.confirm('¿Levantar este bloqueo? Las rutas volverán a poder pasar por ahí.')) return;
+            try {
+                await ApiService.levantarZonaBloqueada(Number(boton.dataset.zonaLevantar));
+                await this.cargarZonasBloqueadasB2G();
+            } catch (error) {
+                alert(`No se pudo levantar la zona: ${error.message}`);
+            }
+        });
+    },
+
+    async cargarZonasBloqueadasB2G() {
+        if (!this.mapaB2G) return;
+        try {
+            const zonas = await ApiService.listarZonasBloqueadas();
+            (this.capasZonasB2G || []).forEach(capa => this.mapaB2G.removeLayer(capa));
+            this.capasZonasB2G = (zonas || []).map((z) => {
+                const motivo = this.escaparTexto(this.NOMBRES_MOTIVO_ZONA[z.motivo] || z.motivo);
+                const nota = z.nota ? `<br>${this.escaparTexto(z.nota)}` : '';
+                return L.circle([z.latitud, z.longitud], {
+                    radius: Number(z.radio_m), color: '#f97316', weight: 2, dashArray: '6 4', fillColor: '#f97316', fillOpacity: 0.18
+                }).addTo(this.mapaB2G).bindPopup(`
+                    <b>⛔ Zona bloqueada: ${motivo}</b>${nota}<br>
+                    Marcada por ${this.escaparTexto(z.creada_por)}<br>
+                    Vence: ${this.escaparTexto(this.formatearFecha(z.expira_en))}<br>
+                    <button type="button" data-zona-levantar="${Number(z.id)}" style="margin-top:6px;padding:3px 8px;border:1px solid #c2410c;border-radius:6px;">Levantar bloqueo</button>
+                `);
+            });
+        } catch (error) {
+            console.error('No se pudieron cargar las zonas bloqueadas:', error.message);
+        }
+    },
+
     MENSAJES_RUTA: {
         PROVEEDOR_DE_RUTAS_NO_CONFIGURADO: 'El servidor no tiene configurada la clave del proveedor de rutas.',
         PROVEEDOR_DE_RUTAS_CLAVE_RECHAZADA: 'El proveedor de rutas rechazó la clave. Hay que revisarla o cambiarla.',
@@ -2495,7 +2587,13 @@ const App = {
             this.capaRutaB2G.push(linea, base);
             this.mapaB2G.fitBounds(linea.getBounds(), { padding: [40, 40] });
             const origen = r.origen_tipo === 'BASE_INSTITUCION' ? 'desde la base' : 'desde el centro de cobertura';
-            estado.innerText = `Ruta por calles ${origen} hasta la alerta #${alertaId}`;
+            let aviso = '';
+            if (r.zonas_cruzadas && r.zonas_cruzadas.length) {
+                aviso = ` ⚠ La ruta sigue pasando por ${r.zonas_cruzadas.length} zona(s) marcada(s) como bloqueada(s). Verifícala antes de enviar la unidad.`;
+            } else if (r.zonas_consideradas > 0) {
+                aviso = ` Evita ${r.zonas_consideradas} zona(s) bloqueada(s).`;
+            }
+            estado.innerText = `Ruta por calles ${origen} hasta la alerta #${alertaId}.${aviso}`;
             tiempo.innerText = `${r.distancia_km} km · ${r.tiempo_estimado}`;
         } catch (error) {
             estado.innerText = `No se pudo calcular la ruta: ${error.message}`;

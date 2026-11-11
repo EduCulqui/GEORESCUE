@@ -4,12 +4,14 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.core.config import settings
+from app.core.geo import distancia_minima_a_ruta_m, puntos_a_evitar
 from app.domain.interfaces.gateways import IRoutingGateway
 
 logger = logging.getLogger("georescue.routing")
 
 GEOAPIFY_ROUTING_URL = "https://api.geoapify.com/v1/routing"
 TIMEOUT_SEGUNDOS = 8.0
+MAX_REGLAS_EVITAR = 15
 
 
 def _sin_ruta(estado: str) -> Dict[str, Any]:
@@ -49,7 +51,9 @@ class EmergencyRoutingGateway(IRoutingGateway):
         destino_lat: float,
         destino_lng: float,
         evitar_bloqueos: bool = False,
+        zonas_bloqueadas: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
+        zonas = zonas_bloqueadas or []
         if not self.api_key:
             logger.warning("Proveedor de rutas no configurado; no se calcula ruta ni ETA.")
             return _sin_ruta("PROVEEDOR_DE_RUTAS_NO_CONFIGURADO")
@@ -61,6 +65,14 @@ class EmergencyRoutingGateway(IRoutingGateway):
             "traffic": "approximated",
             "apiKey": self.api_key,
         }
+        if zonas:
+            reglas = [
+                f"location:{lat},{lng}"
+                for zona in zonas
+                for lat, lng in puntos_a_evitar(zona["latitud"], zona["longitud"], zona["radio_m"])
+            ]
+            # Tope de reglas: cada una consume créditos y alarga la consulta.
+            params["avoid"] = "|".join(reglas[:MAX_REGLAS_EVITAR])
         try:
             cliente = self._client or httpx.Client(timeout=TIMEOUT_SEGUNDOS)
             try:
@@ -72,7 +84,7 @@ class EmergencyRoutingGateway(IRoutingGateway):
                 logger.error("Geoapify rechazó la clave (HTTP %s).", respuesta.status_code)
                 return _sin_ruta("PROVEEDOR_DE_RUTAS_CLAVE_RECHAZADA")
             respuesta.raise_for_status()
-            return self._interpretar(respuesta.json())
+            return self._con_zonas(self._interpretar(respuesta.json()), zonas)
         except httpx.HTTPError as exc:
             # No se registra la URL: lleva la clave y las coordenadas.
             logger.error("Fallo al consultar el proveedor de rutas: %s", exc.__class__.__name__)
@@ -80,6 +92,21 @@ class EmergencyRoutingGateway(IRoutingGateway):
         except (ValueError, KeyError, IndexError, TypeError):
             logger.error("Respuesta de rutas con formato inesperado.")
             return _sin_ruta("PROVEEDOR_DE_RUTAS_RESPUESTA_INVALIDA")
+
+    @staticmethod
+    def _con_zonas(resultado: Dict[str, Any], zonas: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Verifica por cuenta propia si la ruta devuelta cruza alguna zona marcada.
+
+        No se confía en que el proveedor haya evitado la zona: se mide la ruta.
+        """
+        resultado["zonas_consideradas"] = len(zonas)
+        resultado["zonas_cruzadas"] = [
+            zona["id"] for zona in zonas
+            if distancia_minima_a_ruta_m(zona["latitud"], zona["longitud"], resultado["puntos_ruta"]) < zona["radio_m"]
+        ]
+        if zonas:
+            resultado["bloqueos_evitados"] = not resultado["zonas_cruzadas"]
+        return resultado
 
     @staticmethod
     def _interpretar(datos: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,7 +124,9 @@ class EmergencyRoutingGateway(IRoutingGateway):
             "distancia_km": round(float(propiedades["distance"]) / 1000, 2),
             "tiempo_estimado": _formatear_tiempo(float(propiedades["time"])),
             "estado_algoritmo": "RUTA_CALCULADA",
-            # Aún no se evitan zonas: se informa None y no False para no afirmar nada.
+            # Sin zonas marcadas no se afirma nada (None); con zonas lo fija _con_zonas.
             "bloqueos_evitados": None,
+            "zonas_consideradas": 0,
+            "zonas_cruzadas": [],
             "puntos_ruta": puntos,
         }
