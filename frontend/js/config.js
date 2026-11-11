@@ -1,6 +1,7 @@
 // Configuración global del cliente frontend QuantumGeoRescue AI
 const CONFIG = {
     API_HOSTS: [
+        "https://georescue-4big.onrender.com",
         "http://127.0.0.1:8001",
         "http://localhost:8001",
         "http://127.0.0.1:8000",
